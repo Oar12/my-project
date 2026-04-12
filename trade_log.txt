@@ -1,0 +1,67 @@
+2026-04-11 20:10:01,496 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.1 sl=0.05 max_pos=1 min_spread=0.04 cooldown=30.0
+2026-04-11 20:10:05,291 - EXIT: UP entry=0.5200 exit=0.6250 pnl=+1.0096 outcome=WIN exit_type=take_profit hold_time=2.0s up_mid=0.6250 down_mid=0.3750 btc_price=73099.60
+2026-04-11 20:11:01,803 - EXIT: DOWN entry=0.6000 exit=0.7250 pnl=+1.0417 outcome=WIN exit_type=take_profit hold_time=25.0s up_mid=0.2750 down_mid=0.7250 btc_price=73075.79
+2026-04-11 20:12:32,290 - EXIT: UP entry=0.3600 exit=0.3050 pnl=-0.7639 outcome=LOSS exit_type=stop_loss hold_time=23.5s up_mid=0.3050 down_mid=0.6950 btc_price=73076.65
+2026-04-11 20:13:52,292 - EXIT: UP entry=0.5600 exit=0.7350 pnl=+1.5625 outcome=WIN exit_type=take_profit hold_time=24.0s up_mid=0.7350 down_mid=0.2650 btc_price=73099.39
+2026-04-11 20:16:41,919 - EXIT: UP entry=0.8000 exit=0.7450 pnl=-0.3438 outcome=LOSS exit_type=stop_loss hold_time=5.5s up_mid=0.7450 down_mid=0.2550 btc_price=73138.03
+2026-04-11 20:25:23,746 - EXIT: UP entry=0.5500 exit=0.6750 pnl=+1.1364 outcome=WIN exit_type=take_profit hold_time=13.5s up_mid=0.6750 down_mid=0.3250 btc_price=73204.73
+2026-04-11 20:26:02,749 - EXIT: DOWN entry=0.6300 exit=0.5800 pnl=-0.3968 outcome=LOSS exit_type=stop_loss hold_time=10.5s up_mid=0.4200 down_mid=0.5800 btc_price=73191.73
+2026-04-11 20:26:26,747 - EXIT: UP entry=0.6100 exit=0.5550 pnl=-0.4508 outcome=LOSS exit_type=stop_loss hold_time=3.0s up_mid=0.5550 down_mid=0.4450 btc_price=73203.98
+2026-04-11 20:27:52,299 - EXIT: UP entry=0.7800 exit=0.7250 pnl=-0.3526 outcome=LOSS exit_type=stop_loss hold_time=23.0s up_mid=0.7250 down_mid=0.2750 btc_price=73221.28
+2026-04-11 20:28:23,798 - EXIT: DOWN entry=0.4700 exit=0.4050 pnl=-0.6915 outcome=LOSS exit_type=stop_loss hold_time=24.5s up_mid=0.5950 down_mid=0.4050 btc_price=73200.00
+2026-04-11 20:30:33,829 - EXIT: UP entry=0.5500 exit=0.6750 pnl=+1.1364 outcome=WIN exit_type=take_profit hold_time=22.5s up_mid=0.6750 down_mid=0.3250 btc_price=73218.82
+2026-04-11 20:33:02,425 - EXIT: DOWN entry=0.4100 exit=0.3300 pnl=-0.9756 outcome=LOSS exit_type=stop_loss hold_time=6.5s up_mid=0.6700 down_mid=0.3300 btc_price=73211.40
+2026-04-11 20:33:59,916 - EXIT: UP entry=0.7100 exit=0.8450 pnl=+0.9507 outcome=WIN exit_type=take_profit hold_time=10.5s up_mid=0.8450 down_mid=0.1550 btc_price=73217.99
+2026-04-11 20:35:50,621 - EXIT: UP entry=0.7500 exit=0.8650 pnl=+0.7667 outcome=WIN exit_type=take_profit hold_time=9.5s up_mid=0.8650 down_mid=0.1350 btc_price=73411.03
+2026-04-11 20:46:02,369 - EXIT: DOWN entry=0.5800 exit=0.5150 pnl=-0.5603 outcome=LOSS exit_type=stop_loss hold_time=2.5s up_mid=0.4850 down_mid=0.5150 btc_price=73460.72
+2026-04-11 20:46:52,368 - EXIT: DOWN entry=0.7200 exit=0.6550 pnl=-0.4514 outcome=LOSS exit_type=stop_loss hold_time=2.5s up_mid=0.3450 down_mid=0.6550 btc_price=73445.79
+2026-04-11 20:48:20,871 - EXIT: UP entry=0.5200 exit=0.6350 pnl=+1.1058 outcome=WIN exit_type=take_profit hold_time=6.5s up_mid=0.6350 down_mid=0.3650 btc_price=73493.23
+2026-04-11 20:50:25,947 - EXIT: DOWN entry=0.5800 exit=0.6800 pnl=+0.8621 outcome=WIN exit_type=take_profit hold_time=5.0s up_mid=0.3200 down_mid=0.6800 btc_price=73511.39
+2026-04-11 20:55:18,698 - EXIT: DOWN entry=0.5600 exit=0.4950 pnl=-0.5804 outcome=LOSS exit_type=stop_loss hold_time=6.5s up_mid=0.5050 down_mid=0.4950 btc_price=73512.99
+2026-04-11 20:56:40,197 - EXIT: UP entry=0.4900 exit=0.5950 pnl=+1.0714 outcome=WIN exit_type=take_profit hold_time=5.5s up_mid=0.5950 down_mid=0.4050 btc_price=73526.53
+2026-04-11 20:58:17,197 - EXIT: DOWN entry=0.5000 exit=0.4350 pnl=-0.6500 outcome=LOSS exit_type=stop_loss hold_time=33.0s up_mid=0.5650 down_mid=0.4350 btc_price=73517.56
+2026-04-11 21:02:31,417 - EXIT: DOWN entry=0.6000 exit=0.7150 pnl=+0.9583 outcome=WIN exit_type=take_profit hold_time=8.5s up_mid=0.2850 down_mid=0.7150 btc_price=73518.00
+2026-04-11 21:10:33,832 - EXIT: DOWN entry=0.5700 exit=0.6750 pnl=+0.9211 outcome=WIN exit_type=take_profit hold_time=20.0s up_mid=0.3250 down_mid=0.6750 btc_price=73673.35
+2026-04-11 21:20:23,994 - EXIT: UP entry=0.3700 exit=0.3100 pnl=-0.8108 outcome=LOSS exit_type=stop_loss hold_time=5.0s up_mid=0.3100 down_mid=0.6900 btc_price=73494.31
+2026-04-11 21:22:08,000 - EXIT: DOWN entry=0.7400 exit=0.8400 pnl=+0.6757 outcome=WIN exit_type=take_profit hold_time=32.0s up_mid=0.1600 down_mid=0.8400 btc_price=73480.95
+2026-04-11 21:22:46,025 - EXIT: UP entry=0.3400 exit=0.2850 pnl=-0.8088 outcome=LOSS exit_type=stop_loss hold_time=8.0s up_mid=0.2850 down_mid=0.7150 btc_price=73514.72
+2026-04-11 21:25:29,832 - EXIT: DOWN entry=0.5000 exit=0.3950 pnl=-1.0500 outcome=LOSS exit_type=stop_loss hold_time=15.5s up_mid=0.6050 down_mid=0.3950 btc_price=73532.85
+2026-04-11 21:25:56,323 - EXIT: UP entry=0.7100 exit=0.8100 pnl=+0.7042 outcome=WIN exit_type=take_profit hold_time=11.5s up_mid=0.8100 down_mid=0.1900 btc_price=73576.67
+2026-04-11 21:37:02,853 - EXIT: DOWN entry=0.6400 exit=0.7650 pnl=+0.9766 outcome=WIN exit_type=take_profit hold_time=13.0s up_mid=0.2350 down_mid=0.7650 btc_price=73660.18
+2026-04-11 21:40:26,120 - EXIT: UP entry=0.5400 exit=0.4850 pnl=-0.5093 outcome=LOSS exit_type=stop_loss hold_time=8.0s up_mid=0.4850 down_mid=0.5150 btc_price=73662.91
+2026-04-11 21:43:54,119 - EXIT: UP entry=0.8100 exit=0.6050 pnl=-1.2654 outcome=LOSS exit_type=stop_loss hold_time=13.0s up_mid=0.6050 down_mid=0.3950 btc_price=73668.55
+2026-04-11 21:45:39,292 - EXIT: DOWN entry=0.6500 exit=0.7550 pnl=+0.8077 outcome=WIN exit_type=take_profit hold_time=21.0s up_mid=0.2450 down_mid=0.7550 btc_price=73661.22
+2026-04-11 21:47:56,793 - EXIT: UP entry=0.2400 exit=0.1850 pnl=-1.1458 outcome=LOSS exit_type=stop_loss hold_time=8.0s up_mid=0.1850 down_mid=0.8150 btc_price=73662.66
+2026-04-11 21:50:39,417 - EXIT: UP entry=0.6300 exit=0.5600 pnl=-0.5556 outcome=LOSS exit_type=stop_loss hold_time=17.5s up_mid=0.5600 down_mid=0.4400 btc_price=73651.64
+2026-04-11 21:52:10,916 - EXIT: DOWN entry=0.5300 exit=0.6650 pnl=+1.2736 outcome=WIN exit_type=take_profit hold_time=64.5s up_mid=0.3350 down_mid=0.6650 btc_price=73639.00
+2026-04-11 21:52:26,854 - STOP: trades_placed=35 trades_closed=35 wins=17 losses=18 total_pnl=4.5975 win_rate=48.6% uptime=01:42:25
+2026-04-11 22:16:53,531 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.1 sl=0.05 max_pos=1 min_spread=0.04 cooldown=30.0
+2026-04-11 22:17:04,875 - EXIT: UP entry=0.5600 exit=0.6650 pnl=+0.9375 outcome=WIN exit_type=take_profit hold_time=10.0s up_mid=0.6650 down_mid=0.3350 btc_price=73506.44
+2026-04-11 22:18:13,900 - EXIT: DOWN entry=0.7400 exit=0.8450 pnl=+0.7095 outcome=WIN exit_type=take_profit hold_time=4.0s up_mid=0.1550 down_mid=0.8450 btc_price=73469.53
+2026-04-11 22:25:42,372 - EXIT: DOWN entry=0.4400 exit=0.5550 pnl=+1.3068 outcome=WIN exit_type=take_profit hold_time=10.0s up_mid=0.4450 down_mid=0.5550 btc_price=73412.76
+2026-04-11 22:35:41,744 - EXIT: UP entry=0.5800 exit=0.6900 pnl=+0.9483 outcome=WIN exit_type=take_profit hold_time=7.0s up_mid=0.6900 down_mid=0.3100 btc_price=73289.71
+2026-04-11 22:40:37,750 - EXIT: UP entry=0.5300 exit=0.6500 pnl=+1.1321 outcome=WIN exit_type=take_profit hold_time=3.5s up_mid=0.6500 down_mid=0.3500 btc_price=73331.66
+2026-04-11 22:50:46,415 - EXIT: UP entry=0.7200 exit=0.6550 pnl=-0.4514 outcome=LOSS exit_type=stop_loss hold_time=13.0s up_mid=0.6550 down_mid=0.3450 btc_price=73433.02
+2026-04-11 22:59:02,824 - STOP: trades_placed=6 trades_closed=6 wins=5 losses=1 total_pnl=4.5827 win_rate=83.3% uptime=00:42:09
+2026-04-11 22:59:05,142 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.1 sl=0.05 max_pos=1 min_spread=0.04 cooldown=30.0
+2026-04-11 23:06:40,297 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.1 sl=0.05 max_pos=1 min_spread=0.04 cooldown=30.0
+2026-04-11 23:07:39,528 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.1 sl=0.05 max_pos=1 min_spread=0.04 cooldown=30.0
+2026-04-12 09:53:44,152 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.1 sl=0.05 max_pos=1 min_spread=0.04 cooldown=30.0
+2026-04-12 09:56:27,546 - EXIT: UP entry=0.4100 exit=0.5300 pnl=+1.4634 outcome=WIN exit_type=take_profit hold_time=66.0s up_mid=0.5300 down_mid=0.4700 btc_price=71730.81
+2026-04-12 09:57:50,036 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.1 sl=0.05 max_pos=1 min_spread=0.04 cooldown=30.0
+2026-04-12 10:08:16,451 - EXIT: DOWN entry=0.6700 exit=0.5950 pnl=-0.5597 outcome=LOSS exit_type=stop_loss hold_time=10.5s up_mid=0.4050 down_mid=0.5950 btc_price=71662.47
+2026-04-12 10:34:17,152 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.065 sl=0.04 max_pos=3 min_spread=0.04 cooldown=20.0
+2026-04-12 10:46:45,990 - STOP: placed=0 closed=0 wins=0 losses=0 pnl=0.0000 wr=0.0% uptime=00:12:28
+2026-04-12 10:46:52,079 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.065 sl=0.04 max_pos=3 min_spread=0.04 cooldown=20.0
+2026-04-12 10:50:03,499 - STOP: placed=0 closed=0 wins=0 losses=0 pnl=0.0000 wr=0.0% uptime=00:03:11
+2026-04-12 10:50:07,103 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.065 sl=0.04 max_pos=3 min_spread=0.04 cooldown=20.0
+2026-04-12 10:58:37,291 - EXIT: UP entry=0.7500 exit=0.8450 pnl=+0.6333 outcome=WIN exit_type=take_profit hold=1.5s up_mid=0.8450 down_mid=0.1550 btc_price=71620.50
+2026-04-12 11:05:25,459 - EXIT: DOWN entry=0.5100 exit=0.4150 pnl=-0.9314 outcome=LOSS exit_type=stop_loss hold=10.0s up_mid=0.5850 down_mid=0.4150 btc_price=71578.00
+2026-04-12 11:08:22,967 - EXIT: UP entry=0.5600 exit=0.6650 pnl=+0.9375 outcome=WIN exit_type=take_profit hold=10.5s up_mid=0.6650 down_mid=0.3350 btc_price=71569.07
+2026-04-12 11:10:54,541 - EXIT: UP entry=0.6000 exit=0.6650 pnl=+0.5417 outcome=WIN exit_type=take_profit hold=35.5s up_mid=0.6650 down_mid=0.3350 btc_price=71578.01
+2026-04-12 11:21:00,744 - EXIT: DOWN entry=0.6700 exit=0.5850 pnl=-0.6343 outcome=LOSS exit_type=stop_loss hold=36.5s up_mid=0.4150 down_mid=0.5850 btc_price=71585.67
+2026-04-12 11:23:25,754 - EXIT: DOWN entry=0.5700 exit=0.5250 pnl=-0.3947 outcome=LOSS exit_type=stop_loss hold=14.0s up_mid=0.4750 down_mid=0.5250 btc_price=71600.04
+2026-04-12 11:27:11,704 - STOP: placed=6 closed=6 wins=3 losses=3 pnl=0.1521 wr=50.0% uptime=00:37:04
+2026-04-12 11:34:13,040 - START: mode=PAPER coin=BTC strategy=TrendFollowingStrategy size_usdc=5.0 tp=0.065 sl=0.04 max_pos=3 min_spread=0.04 cooldown=20.0
+2026-04-12 11:35:43,041 - EXIT: DOWN entry=0.5000 exit=0.5650 pnl=+0.6500 outcome=WIN exit_type=take_profit hold=17.5s up_mid=0.4350 down_mid=0.5650 btc_price=71614.33
+2026-04-12 12:12:32,684 - STOP: placed=1 closed=1 wins=1 losses=0 pnl=0.6500 wr=100.0% uptime=00:38:19
