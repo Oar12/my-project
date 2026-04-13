@@ -15,8 +15,9 @@ if TYPE_CHECKING:
 class Signal:
     """A trading signal produced by a strategy."""
     side: str          # Which token to buy: "up" or "down"
-    confidence: float  # 0–1 score, used only for logging (not for sizing)
+    confidence: float  # 0–1 score, equal to R² of the regression
     reason: str        # Human-readable explanation shown in the UI log
+    slope: float = 0.0 # Price change per second from linear regression
 
 class BaseStrategy(ABC):
     """

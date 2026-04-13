@@ -20,6 +20,7 @@ Optional for gasless trading:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -45,7 +46,7 @@ from lib.price_tracker import PriceTracker
 from lib.console import Colors, format_countdown, LogBuffer
 from lib.bot_stats import BotStats
 from lib.btc_feed import BtcFeed
-from lib.strategies import Signal, BaseStrategy, TrendFollowingStrategy
+from strategies import Signal, BaseStrategy, TrendFollowingStrategy
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.WARNING)
@@ -54,27 +55,34 @@ logger = logging.getLogger("trend_bot")
 # ── Trade file logger ─────────────────────────────────────────────────────────
 trade_logger = logging.getLogger("trade_logger")
 trade_logger.setLevel(logging.INFO)
-_trade_handler = logging.FileHandler("trade_log.txt", mode="a")
-_trade_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+_trade_handler = logging.FileHandler("trade_log.jsonl", mode="a")
+_trade_handler.setFormatter(logging.Formatter("%(message)s"))  # raw JSON only
 trade_logger.addHandler(_trade_handler)
+trade_logger.propagate = False  # don't leak into root logger
+
+
+def _log(record: dict) -> None:
+    """Stamp a record with ISO timestamp and write one JSON line."""
+    record["ts"] = datetime.now().isoformat(timespec="milliseconds")
+    trade_logger.info(json.dumps(record))
 
 # =============================================================================
 #  CONFIG — all tunable parameters
 # =============================================================================
 
 # ── Strategy parameters ───────────────────────────────────────────────────────
-LOOKBACK_SECONDS  = 25.0    # How far back (s) to look when computing the trend
+LOOKBACK_SECONDS  = 30.0    # How far back (s) to look when computing the trend
 MIN_SAMPLES       = 4       # Minimum price points required before signalling
-TREND_THRESHOLD   = 0.72    # Minimum R² score (0–1); higher = cleaner trend required
-MIN_PRICE_CHANGE  = 0.0009  # Minimum avg per-sample move to ignore noise
+TREND_THRESHOLD   = 0.75    # Minimum R² score (0–1); higher = cleaner trend required
+MIN_PRICE_CHANGE  = 0.001  # Minimum avg per-sample move to ignore noise
 
 # ── Risk controls ─────────────────────────────────────────────────────────────
-TAKE_PROFIT   = 0.065   # Close trade when price rises this much above entry (USDC)
-STOP_LOSS     = 0.04    # Close trade when price falls this much below entry (USDC)
+TAKE_PROFIT   = 0.10   # Close trade when price rises this much above entry (USDC)
+STOP_LOSS     = 0.03    # Close trade when price falls this much below entry (USDC)
 MIN_SPREAD    = 0.04    # Skip entry if bid-ask spread is wider than this
 COOLDOWN      = 20.0    # Minimum seconds between consecutive entries
 MIN_HOLD_TIME = 10.0    # SL cannot fire before this many seconds in a position
-MAX_POSITIONS = 3       # Maximum concurrent open positions
+MAX_POSITIONS = 1       # Maximum concurrent open positions
 
 # ── Trade sizing ──────────────────────────────────────────────────────────────
 SIZE_USDC = 5.0         # USDC to spend per trade
@@ -85,7 +93,7 @@ UI_REFRESH     = 0.5    # Terminal redraw interval in seconds
 LOG_BUFFER_SIZE = 8     # Number of recent log lines shown in the terminal UI
 
 # ── Market expiry guard ───────────────────────────────────────────────────────
-NO_ENTRY_BEFORE_EXPIRY = 50  # Don't enter a trade if market expires within this many seconds
+NO_ENTRY_BEFORE_EXPIRY = 45  # Don't enter a trade if market expires within this many seconds
 
 # =============================================================================
 #  AutoBot 
@@ -152,13 +160,19 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
         self._running = True
         mode = "PAPER" if self.paper else "LIVE"
         self.log.add(f"AutoBot starting [{mode}] coin={self.coin}", "info")
-        trade_logger.info(
-            f"START: mode={mode} coin={self.coin} "
-            f"strategy={type(self.strategy).__name__} "
-            f"size_usdc={self.size_usdc} tp={self.positions.take_profit} "
-            f"sl={self.positions.stop_loss} max_pos={self.positions.max_positions} "
-            f"min_spread={self.min_spread} cooldown={self.cooldown}"
-        )
+        _log({
+            "event":      "START",
+            "mode":       mode,
+            "coin":       self.coin,
+            "strategy":   type(self.strategy).__name__,
+            "size_usdc":  self.size_usdc,
+            "tp":         self.positions.take_profit,
+            "sl":         self.positions.stop_loss,
+            "max_pos":    self.positions.max_positions,
+            "min_spread": self.min_spread,
+            "cooldown":   self.cooldown,
+            "min_hold":   self.min_hold_time,
+        })
 
         # ── Register market callbacks ─────────────────────────────────────────
 
@@ -217,12 +231,16 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
                 pass
             await self.market.stop()
             self.log.add("AutoBot stopped.", "info")
-            trade_logger.info(
-                f"STOP: placed={self.stats.trades_placed} closed={self.stats.trades_closed} "
-                f"wins={self.stats.wins} losses={self.stats.losses} "
-                f"pnl={self.stats.total_pnl:.4f} wr={self.stats.win_rate:.1f}% "
-                f"uptime={self.stats.uptime}"
-            )
+            _log({
+                "event":         "STOP",
+                "trades_placed": self.stats.trades_placed,
+                "trades_closed": self.stats.trades_closed,
+                "wins":          self.stats.wins,
+                "losses":        self.stats.losses,
+                "total_pnl":     round(self.stats.total_pnl, 4),
+                "win_rate":      round(self.stats.win_rate, 1),
+                "uptime":        self.stats.uptime,
+            })
 
     # ── Tick ──────────────────────────────────────────────────────────────────
 
@@ -299,10 +317,13 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
                 )
                 if not result.success:
                     self.log.add(f"Order FAILED: {result.message}", "error")
-                    trade_logger.error(
-                        f"ORDER_FAILED: {signal.side} @ {entry_price:.4f} "
-                        f"size={size:.2f} reason={result.message}"
-                    )
+                    _log({
+                        "event":   "ORDER_FAILED",
+                        "side":    signal.side,
+                        "price":   round(entry_price, 4),
+                        "size":    round(size, 2),
+                        "reason":  result.message,
+                    })
                     return
                 order_id = result.order_id
 
@@ -320,6 +341,27 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
         if pos is None:
             return
 
+        # ── Compute and store entry-context on the position ───────────────────
+        mkt = self.market.current_market
+        mkt_elapsed   = -1
+        mkt_remaining = -1
+        if mkt:
+            end_ts = mkt.end_timestamp()
+            if end_ts:
+                mkt_remaining = max(0, int(end_ts - time.time()))
+                mkt_elapsed   = max(0, 300 - mkt_remaining)
+
+        mid_price           = self._mid(signal.side)
+        spread              = self._spread(signal.side)
+        slippage            = round(entry_price - mid_price, 4)
+
+        pos.r2                    = round(signal.confidence, 4)
+        pos.slope                 = round(signal.slope, 6)
+        pos.spread_at_entry       = round(spread, 4)
+        pos.slippage              = slippage
+        pos.mkt_elapsed_at_entry  = mkt_elapsed
+        pos.mkt_remaining_at_entry = mkt_remaining
+
         self._last_trade_time = time.time()
         self.stats.trades_placed += 1
 
@@ -329,12 +371,22 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
             f"${self.size_usdc:.2f}  conf={signal.confidence:.2f}  ({signal.reason})",
             "trade",
         )
-        trade_logger.info(
-            f"ENTER: {mode_tag} {signal.side.upper()} @ {entry_price:.4f} "
-            f"size=${self.size_usdc:.2f} conf={signal.confidence:.2f} "
-            f"reason='{signal.reason}' up_mid={self._mid('up'):.4f} "
-            f"down_mid={self._mid('down'):.4f} btc_price={self.btc.price:.2f}"
-        )
+        _log({
+            "event":        "ENTER",
+            "mode":         "PAPER" if self.paper else "LIVE",
+            "side":         signal.side,
+            "entry_price":  round(entry_price, 4),
+            "size_usdc":    self.size_usdc,
+            "r2":           pos.r2,
+            "slope":        pos.slope,
+            "spread":       pos.spread_at_entry,
+            "slippage":     pos.slippage,
+            "mkt_elapsed":  pos.mkt_elapsed_at_entry,
+            "mkt_remaining": pos.mkt_remaining_at_entry,
+            "up_mid":       round(self._mid("up"), 4),
+            "down_mid":     round(self._mid("down"), 4),
+            "btc_price":    round(self.btc.price, 2),
+        })
 
     async def _exit_position(self, pos: Position, exit_type: str, pnl: float) -> None:
         current_price = self._mid(pos.side)
@@ -357,13 +409,37 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
             f"CLOSE {pos.side.upper()} @ {current_price:.4f}  PnL {pnl:+.4f}  ({exit_type})",
             level,
         )
-        trade_logger.info(
-            f"EXIT: {pos.side.upper()} entry={pos.entry_price:.4f} "
-            f"exit={current_price:.4f} pnl={pnl:+.4f} "
-            f"outcome={'WIN' if pnl >= 0 else 'LOSS'} exit_type={exit_type} "
-            f"hold={pos.get_hold_time():.1f}s up_mid={self._mid('up'):.4f} "
-            f"down_mid={self._mid('down'):.4f} btc_price={self.btc.price:.2f}"
-        )
+
+        # Market time remaining at the moment of exit
+        mkt = self.market.current_market
+        mkt_remaining_exit = -1
+        if mkt:
+            end_ts = mkt.end_timestamp()
+            if end_ts:
+                mkt_remaining_exit = max(0, int(end_ts - time.time()))
+
+        _log({
+            "event":                "EXIT",
+            "side":                 pos.side,
+            "entry_price":          round(pos.entry_price, 4),
+            "exit_price":           round(current_price, 4),
+            "pnl":                  round(pnl, 4),
+            "outcome":              "WIN" if pnl >= 0 else "LOSS",
+            "exit_type":            exit_type,
+            "hold_time":            round(pos.get_hold_time(), 1),
+            # entry-context (carried from Position)
+            "r2":                   pos.r2,
+            "slope":                pos.slope,
+            "spread_at_entry":      pos.spread_at_entry,
+            "slippage":             pos.slippage,
+            "mkt_elapsed_entry":    pos.mkt_elapsed_at_entry,
+            "mkt_remaining_entry":  pos.mkt_remaining_at_entry,
+            # exit-context
+            "mkt_remaining_exit":   mkt_remaining_exit,
+            "up_mid":               round(self._mid("up"), 4),
+            "down_mid":             round(self._mid("down"), 4),
+            "btc_price":            round(self.btc.price, 2),
+        })
 
     def _emergency_close_all(self) -> None:
         """Force-close all positions on market rotation."""
@@ -378,11 +454,16 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
                 f"FORCE-CLOSE {pos.side.upper()} (market rotation) PnL {pnl:+.4f}",
                 "warning",
             )
-            trade_logger.warning(
-                f"FORCE_CLOSE: {pos.side.upper()} entry={pos.entry_price:.4f} "
-                f"exit={price:.4f} pnl={pnl:+.4f} "
-                f"hold={pos.get_hold_time():.1f}s reason=market_rotation"
-            )
+            _log({
+                "event":       "FORCE_CLOSE",
+                "side":        pos.side,
+                "entry_price": round(pos.entry_price, 4),
+                "exit_price":  round(price, 4),
+                "pnl":         round(pnl, 4),
+                "outcome":     "WIN" if pnl >= 0 else "LOSS",
+                "hold_time":   round(pos.get_hold_time(), 1),
+                "reason":      "market_rotation",
+            })
 
 # =============================================================================
 #  Display

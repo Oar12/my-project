@@ -3,7 +3,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Literal
 
+
 ExitType = Literal["take_profit", "stop_loss", None]
+
 
 @dataclass
 class Position:
@@ -20,6 +22,14 @@ class Position:
     # TP/SL config (set by PositionManager)
     take_profit_delta: float = 0.10
     stop_loss_delta: float = 0.05
+
+    # Entry-context fields — populated by AutoBot after open_position()
+    r2: float = 0.0
+    slope: float = 0.0
+    spread_at_entry: float = 0.0
+    slippage: float = 0.0            # entry_price - mid_price at entry
+    mkt_elapsed_at_entry: int = -1   # seconds since market opened
+    mkt_remaining_at_entry: int = -1 # seconds left in market at entry
 
     @property
     def take_profit_price(self) -> float:
@@ -52,6 +62,7 @@ class Position:
     def check_stop_loss(self, current_price: float) -> bool:
         """Check if stop loss is triggered."""
         return current_price <= self.stop_loss_price
+
 
 @dataclass
 class PositionManager:

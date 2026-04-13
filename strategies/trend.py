@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Optional
 
-from lib.strategies.base import BaseStrategy, Signal
+from strategies.base import BaseStrategy, Signal
 
 if TYPE_CHECKING:
     from lib.btc_feed import BtcFeed
@@ -16,10 +16,10 @@ class TrendFollowingStrategy(BaseStrategy):
 
     def __init__(
         self,
-        lookback_seconds: float = 25.0,    # How far back to look for the trend (in seconds).
+        lookback_seconds: float = 30.0,    # How far back to look for the trend (in seconds).
         min_samples: int = 4,              # Minimum number of data points required to consider a trend valid.
-        trend_threshold: float = 0.72,     # Minimum R² score (0–1) to consider the trend strong enough. Higher = cleaner trend required.
-        min_price_change: float = 0.0009,  # Minimum average per-sample price move to ignore noise (e.g. 0.0009 = 0.09% per sample).
+        trend_threshold: float = 0.75,     # Minimum R² score (0–1) to consider the trend strong enough. Higher = cleaner trend required.
+        min_price_change: float = 0.001,  # Minimum average per-sample price move to ignore noise (e.g. 0.0009 = 0.09% per sample).
     ):
         self.lookback_seconds  = lookback_seconds
         self.min_samples       = min_samples
@@ -109,6 +109,7 @@ class TrendFollowingStrategy(BaseStrategy):
                 candidates.append(Signal(
                     side="up",
                     confidence=r2,
+                    slope=slope,
                     reason=f"UP trending up  Δ={total_change:+.4f}  R²={r2:.2f}  slope={slope:+.5f}",
                 ))
 
@@ -120,6 +121,7 @@ class TrendFollowingStrategy(BaseStrategy):
                 candidates.append(Signal(
                     side="down",
                     confidence=r2,
+                    slope=slope,
                     reason=f"DOWN trending up  Δ={total_change:+.4f}  R²={r2:.2f}  slope={slope:+.5f}",
                 ))
 
