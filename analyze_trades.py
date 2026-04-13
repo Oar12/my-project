@@ -1,343 +1,367 @@
 """
-analyze_trades.py — Post-session trade analysis
+Trade log analyzer
 Reads trade_log.jsonl and prints a structured performance report.
+
+Usage:
+    python analyze_trades.py
+    python analyze_trades.py --log path/to/trade_log.jsonl
 """
 
-import json
-import math
 import sys
+import argparse
 from pathlib import Path
 
 import pandas as pd
 
-LOG_FILE = "trade_log.jsonl"
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
-# =============================================================================
-#  Load
-# =============================================================================
+parser = argparse.ArgumentParser()
+parser.add_argument("--log", default="trade_log.jsonl", help="Path to JSONL log file")
+args = parser.parse_args()
 
-records = []
-path = Path(LOG_FILE)
-if not path.exists():
-    print(f"❌  {LOG_FILE} not found.")
+LOG_FILE = Path(args.log)
+if not LOG_FILE.exists():
+    print(f"❌  {LOG_FILE} not found")
     sys.exit(1)
 
-with open(path) as f:
-    for line in f:
-        line = line.strip()
-        if line:
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
+# ── Load ──────────────────────────────────────────────────────────────────────
 
-if not records:
-    print("❌  No records parsed — is the file empty?")
+df_raw = pd.read_json(LOG_FILE, lines=True)
+
+# Work only with EXIT events — they carry all entry-context fields too
+df = df_raw[df_raw["event"] == "EXIT"].copy().reset_index(drop=True)
+
+if df.empty:
+    print("❌  No EXIT events found in log file.")
     sys.exit(1)
 
-df_all = pd.DataFrame(records)
+df["win"] = df["outcome"] == "WIN"
 
-# Work only with EXIT rows (FORCE_CLOSE counts as a closed trade too)
-exits = df_all[df_all["event"].isin(["EXIT", "FORCE_CLOSE"])].copy()
+wins   = df[df["win"]]
+losses = df[~df["win"]]
+total  = len(df)
+n_wins = len(wins)
+n_loss = len(losses)
+wr     = n_wins / total
 
-if exits.empty:
-    print("❌  No EXIT records found yet — run the bot first.")
-    sys.exit(1)
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-# Numeric coercion (FORCE_CLOSE rows may be missing some optional fields)
-num_cols = [
-    "pnl", "hold_time", "entry_price", "exit_price",
-    "r2", "slope", "spread_at_entry", "slippage",
-    "mkt_elapsed_entry", "mkt_remaining_entry", "mkt_remaining_exit",
-    "btc_price",
-]
-for col in num_cols:
-    if col in exits.columns:
-        exits[col] = pd.to_numeric(exits[col], errors="coerce")
+W    = 62
+SEP  = "=" * W
+SEP2 = "-" * W
 
-wins   = exits[exits["outcome"] == "WIN"]
-losses = exits[exits["outcome"] == "LOSS"]
+def section(title: str) -> None:
+    print(f"\n{SEP}\n{title}\n{SEP}")
 
-# =============================================================================
-#  Helpers
-# =============================================================================
+def safe_mean(s: pd.Series) -> float:
+    return float(s.mean()) if len(s) > 0 else 0.0
 
-SEP  = "=" * 60
-SEP2 = "-" * 50
-
-def pct(n, d):
-    return n / d * 100 if d else 0.0
-
-def safe_mean(series):
-    s = series.dropna()
-    return s.mean() if len(s) else 0.0
+def has_data(col: str) -> bool:
+    """Column exists, has non-null values, and is not all-zero/negative-one."""
+    return (
+        col in df.columns
+        and df[col].notna().any()
+        and df[col].ne(-1).any()
+        and df[col].ne(0).any()
+    )
 
 
-# =============================================================================
-#  1. Basic summary
-# =============================================================================
+# ── 1. Overview ───────────────────────────────────────────────────────────────
 
-total_pnl = exits["pnl"].sum()
-win_rate  = pct(len(wins), len(exits))
-avg_win   = safe_mean(wins["pnl"])
-avg_loss  = safe_mean(losses["pnl"])
+section("📊  OVERVIEW")
+print(f"Trades    : {total}  (wins={n_wins}  losses={n_loss})")
+print(f"Win rate  : {wr*100:.2f}%")
+print(f"Total PnL : {df['pnl'].sum():+.4f}")
 
-print(SEP)
-print("📊  TRADE ANALYSIS REPORT")
-print(SEP)
-print(f"\n📈  Total trades : {len(exits)}")
-print(f"✅  Wins         : {len(wins)}   ❌  Losses: {len(losses)}")
-print(f"🎯  Win rate     : {win_rate:.1f}%")
+# Show session summary from START/STOP events if present
+sessions = df_raw[df_raw["event"] == "START"]
+if not sessions.empty:
+    print(f"\nSessions logged: {len(sessions)}")
+    if "mode" in sessions.columns:
+        modes = sessions["mode"].value_counts().to_dict()
+        print(f"Modes: {modes}")
 
-# =============================================================================
-#  2. PnL
-# =============================================================================
 
-gross_profit  = wins["pnl"].sum()
-gross_loss    = abs(losses["pnl"].sum())
-profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
-expectancy    = (win_rate / 100 * avg_win) - ((1 - win_rate / 100) * abs(avg_loss))
-rr_ratio      = abs(avg_win / avg_loss) if avg_loss else float("inf")
+# ── 2. PnL Analysis ───────────────────────────────────────────────────────────
 
-pnl_std  = exits["pnl"].std()
-sharpe   = exits["pnl"].mean() / pnl_std if pnl_std > 0 else 0.0
+section("💰  PnL ANALYSIS")
 
-print(f"\n{SEP}")
-print("💰  PnL ANALYSIS")
-print(SEP)
-print(f"Total PnL        : {total_pnl:+.4f}")
-print(f"Avg win          : {avg_win:+.4f}   Avg loss: {avg_loss:+.4f}")
-print(f"Risk/Reward      : {rr_ratio:.2f}")
-print(f"Expectancy/trade : {expectancy:+.4f}")
-print(f"Profit factor    : {profit_factor:.2f}")
-print(f"Sharpe (naive)   : {sharpe:.3f}")
+avg_win      = safe_mean(wins["pnl"])
+avg_loss     = safe_mean(losses["pnl"])
+gross_profit = float(wins["pnl"].sum())
+gross_loss   = abs(float(losses["pnl"].sum()))
+pf           = gross_profit / gross_loss if gross_loss > 0 else float("inf")
+rr           = abs(avg_win / avg_loss)   if avg_loss  != 0 else float("inf")
+expectancy   = (wr * avg_win) - ((1 - wr) * abs(avg_loss))
+std          = float(df["pnl"].std())
+sharpe       = float(df["pnl"].mean()) / std if std > 0 else 0.0
 
-# =============================================================================
-#  3. Hold time
-# =============================================================================
+print(f"Avg win         : {avg_win:+.4f}")
+print(f"Avg loss        : {avg_loss:+.4f}")
+print(f"Risk/Reward     : {rr:.2f}")
+print(f"Expectancy      : {expectancy:+.4f} per trade")
+print(f"Profit factor   : {pf:.2f}")
+print(f"Std dev (PnL)   : {std:.4f}")
+print(f"Sharpe (simple) : {sharpe:.3f}")
 
-avg_hold_all    = safe_mean(exits["hold_time"])
-avg_hold_wins   = safe_mean(wins["hold_time"])
-avg_hold_losses = safe_mean(losses["hold_time"])
 
-print(f"\n{SEP}")
-print("⏱️   HOLD TIME")
-print(SEP)
-print(f"Avg (all)    : {avg_hold_all:.1f}s")
-print(f"Avg (wins)   : {avg_hold_wins:.1f}s")
-print(f"Avg (losses) : {avg_hold_losses:.1f}s")
+# ── 3. Hold Time ──────────────────────────────────────────────────────────────
 
-if avg_hold_losses > avg_hold_wins * 1.5 and avg_hold_wins > 0:
-    diff = avg_hold_losses - avg_hold_wins
-    print(f"  ⚠️  You hold losers {diff:.1f}s longer "
-          f"({avg_hold_losses / avg_hold_wins:.1f}× longer than winners)")
+section("⏱️   HOLD TIME ANALYSIS")
 
-buckets = [("0-10s", 0, 10), ("10-30s", 10, 30),
-           ("30-60s", 30, 60), ("60-120s", 60, 120), ("120s+", 120, 9999)]
-print(f"\n{'Bucket':<10} {'Trades':>7} {'WR%':>8} {'AvgPnL':>10} {'TotalPnL':>12}")
+avg_hold_all  = float(df["hold_time"].mean())
+avg_hold_wins = safe_mean(wins["hold_time"])
+avg_hold_loss = safe_mean(losses["hold_time"])
+
+print(f"Avg hold (all)    : {avg_hold_all:.1f}s")
+print(f"Avg hold (wins)   : {avg_hold_wins:.1f}s")
+print(f"Avg hold (losses) : {avg_hold_loss:.1f}s")
+
+if avg_hold_wins > 0 and avg_hold_loss > avg_hold_wins * 1.5:
+    pct_longer = (avg_hold_loss / avg_hold_wins - 1) * 100
+    print(f"  ⚠️  Losers held {avg_hold_loss - avg_hold_wins:.1f}s longer ({pct_longer:.0f}% longer than winners)")
+
+HOLD_BUCKETS = [("0-10s", 0, 10), ("10-30s", 10, 30), ("30-60s", 30, 60),
+                ("60-120s", 60, 120), ("120s+", 120, 9999)]
+
+print(f"\n{'Bucket':<10} {'Trades':>7} {'Win%':>8} {'Avg PnL':>10} {'Total PnL':>12}")
 print(SEP2)
-for name, lo, hi in buckets:
-    b = exits[(exits["hold_time"] >= lo) & (exits["hold_time"] < hi)]
-    if b.empty:
-        continue
-    bw = (b["outcome"] == "WIN").sum()
-    print(f"{name:<10} {len(b):>7} {pct(bw, len(b)):>7.1f}% "
-          f"{b['pnl'].mean():>10.4f} {b['pnl'].sum():>12.4f}")
+for name, lo, hi in HOLD_BUCKETS:
+    b = df[(df["hold_time"] >= lo) & (df["hold_time"] < hi)]
+    if len(b):
+        flag = "✓" if b["pnl"].sum() > 0 else "✗"
+        print(f"{name:<10} {len(b):>7} {b['win'].mean()*100:>7.1f}%"
+              f" {b['pnl'].mean():>10.4f} {b['pnl'].sum():>12.4f}  {flag}")
 
-# =============================================================================
-#  4. Market timing
-# =============================================================================
+corr_hold = float(df["hold_time"].corr(df["pnl"]))
+print(f"\nCorrelation (hold time vs PnL): {corr_hold:.3f}")
+if corr_hold < -0.3:
+    print("  → Longer holds strongly associated with worse outcomes — shorten trades")
 
-if "mkt_elapsed_entry" in exits.columns:
-    timing = exits.dropna(subset=["mkt_elapsed_entry"])
-    if not timing.empty:
-        print(f"\n{SEP}")
-        print("🕐  MARKET TIMING  (when in the 5-min window did you enter?)")
-        print(SEP)
 
-        time_buckets = [
-            ("0–60s",    0,   60),
-            ("60–120s",  60,  120),
-            ("120–180s", 120, 180),
-            ("180–240s", 180, 240),
-            ("240–300s", 240, 300),
-        ]
-        print(f"{'Window':<12} {'Trades':>7} {'WR%':>8} {'AvgPnL':>10} {'TotalPnL':>12}")
-        print(SEP2)
-        best_name, best_pnl = None, float("-inf")
-        for name, lo, hi in time_buckets:
-            b = timing[(timing["mkt_elapsed_entry"] >= lo) &
-                       (timing["mkt_elapsed_entry"] <  hi)]
-            if b.empty:
-                continue
-            bw = (b["outcome"] == "WIN").sum()
-            total = b["pnl"].sum()
-            print(f"{name:<12} {len(b):>7} {pct(bw, len(b)):>7.1f}% "
-                  f"{b['pnl'].mean():>10.4f} {total:>12.4f}")
-            if total > best_pnl:
-                best_pnl, best_name = total, name
+# ── 4. Market Timing ──────────────────────────────────────────────────────────
 
-        if best_name:
-            print(f"\n  ✅  Best window: {best_name}")
+TIMING_BUCKETS = [
+    ("0-60s   (early)",  0,   60),
+    ("60-120s",          60,  120),
+    ("120-180s  (mid)",  120, 180),
+    ("180-240s",         180, 240),
+    ("240-300s  (late)", 240, 300),
+]
 
-# =============================================================================
-#  5. Signal quality (R²)
-# =============================================================================
+if has_data("mkt_elapsed_entry"):
+    section("⏰  MARKET TIMING  (where in the 5-min window did you enter?)")
 
-if "r2" in exits.columns:
-    r2_data = exits.dropna(subset=["r2"])
-    r2_data = r2_data[r2_data["r2"] > 0]
-    if not r2_data.empty:
-        print(f"\n{SEP}")
-        print("📐  SIGNAL QUALITY  (does higher R² actually predict wins?)")
-        print(SEP)
+    print(f"{'Window':<22} {'Trades':>7} {'Win%':>8} {'Avg PnL':>10} {'Total PnL':>12}")
+    print(SEP2)
+    for name, lo, hi in TIMING_BUCKETS:
+        b = df[(df["mkt_elapsed_entry"] >= lo) & (df["mkt_elapsed_entry"] < hi)]
+        if len(b):
+            flag = "✓" if b["pnl"].sum() > 0 else "✗"
+            print(f"{name:<22} {len(b):>7} {b['win'].mean()*100:>7.1f}%"
+                  f" {b['pnl'].mean():>10.4f} {b['pnl'].sum():>12.4f}  {flag}")
 
-        r2_buckets = [
-            ("0.72–0.80", 0.72, 0.80),
-            ("0.80–0.90", 0.80, 0.90),
-            ("0.90–1.00", 0.90, 1.01),
-        ]
-        print(f"{'R² bucket':<14} {'Trades':>7} {'WR%':>8} {'AvgPnL':>10} {'TotalPnL':>12}")
-        print(SEP2)
-        for name, lo, hi in r2_buckets:
-            b = r2_data[(r2_data["r2"] >= lo) & (r2_data["r2"] < hi)]
-            if b.empty:
-                continue
-            bw = (b["outcome"] == "WIN").sum()
-            print(f"{name:<14} {len(b):>7} {pct(bw, len(b)):>7.1f}% "
-                  f"{b['pnl'].mean():>10.4f} {b['pnl'].sum():>12.4f}")
+    corr_timing = float(df["mkt_elapsed_entry"].corr(df["pnl"]))
+    print(f"\nCorrelation (elapsed vs PnL): {corr_timing:.3f}")
+    if corr_timing > 0.2:
+        print("  → Later entries in the window tend to perform better")
+    elif corr_timing < -0.2:
+        print("  → Earlier entries in the window tend to perform better")
+    else:
+        print("  → Entry timing shows no strong correlation with outcome")
 
-        corr = r2_data["r2"].corr(r2_data["pnl"])
-        print(f"\n  Correlation R² ↔ PnL : {corr:.3f}")
-        if not math.isnan(corr) and corr < 0.1:
-            print("  ⚠️  Weak correlation — R² may not be a reliable filter at current threshold")
+    print(f"\nAvg time remaining at entry : {df['mkt_remaining_entry'].mean():.0f}s")
+    if has_data("mkt_remaining_exit"):
+        print(f"Avg time remaining at exit  : {df['mkt_remaining_exit'].mean():.0f}s")
+else:
+    corr_timing = 0.0
 
-# =============================================================================
-#  6. Spread at entry
-# =============================================================================
 
-if "spread_at_entry" in exits.columns:
-    sp_data = exits.dropna(subset=["spread_at_entry"])
-    sp_data = sp_data[sp_data["spread_at_entry"] > 0]
-    if not sp_data.empty:
-        print(f"\n{SEP}")
-        print("📏  SPREAD AT ENTRY")
-        print(SEP)
+# ── 5. Signal Quality (R²) ────────────────────────────────────────────────────
 
-        sp_buckets = [
-            ("<0.02",     0,    0.02),
-            ("0.02-0.03", 0.02, 0.03),
-            ("0.03-0.04", 0.03, 0.04),
-            ("≥0.04",     0.04, 9),
-        ]
-        print(f"{'Spread':<14} {'Trades':>7} {'WR%':>8} {'AvgPnL':>10}")
-        print(SEP2)
-        for name, lo, hi in sp_buckets:
-            b = sp_data[(sp_data["spread_at_entry"] >= lo) &
-                        (sp_data["spread_at_entry"] <  hi)]
-            if b.empty:
-                continue
-            bw = (b["outcome"] == "WIN").sum()
-            print(f"{name:<14} {len(b):>7} {pct(bw, len(b)):>7.1f}% "
-                  f"{b['pnl'].mean():>10.4f}")
+corr_r2    = 0.0
+corr_slope = 0.0
 
-        print(f"\n  Avg spread on wins   : {safe_mean(wins.get('spread_at_entry', pd.Series())):.4f}")
-        print(f"  Avg spread on losses : {safe_mean(losses.get('spread_at_entry', pd.Series())):.4f}")
+if has_data("r2"):
+    section("📐  SIGNAL QUALITY  (R² and slope at entry)")
 
-# =============================================================================
-#  7. Directional (UP vs DOWN)
-# =============================================================================
+    R2_BUCKETS = [
+        ("0.72-0.80", 0.72, 0.80),
+        ("0.80-0.88", 0.80, 0.88),
+        ("0.88-0.94", 0.88, 0.94),
+        ("0.94-1.00", 0.94, 1.01),
+    ]
 
-print(f"\n{SEP}")
-print("📊  DIRECTIONAL ANALYSIS")
-print(SEP)
+    print(f"{'R² range':<14} {'Trades':>7} {'Win%':>8} {'Avg PnL':>10}")
+    print(SEP2)
+    for name, lo, hi in R2_BUCKETS:
+        b = df[(df["r2"] >= lo) & (df["r2"] < hi)]
+        if len(b):
+            flag = "✓" if b["pnl"].mean() > 0 else "✗"
+            print(f"{name:<14} {len(b):>7} {b['win'].mean()*100:>7.1f}%"
+                  f" {b['pnl'].mean():>10.4f}  {flag}")
+
+    corr_r2 = float(df["r2"].corr(df["pnl"]))
+    print(f"\nCorrelation (R² vs PnL)    : {corr_r2:.3f}")
+    if corr_r2 > 0.2:
+        print("  → Higher R² tends to produce better outcomes ✓")
+    elif corr_r2 < -0.2:
+        print("  ⚠️  Higher R² is NOT predicting better outcomes — revisit trend_threshold")
+    else:
+        print("  → R² has little predictive power over trade outcome")
+
+    if has_data("slope"):
+        corr_slope = float(df["slope"].corr(df["pnl"]))
+        print(f"Correlation (slope vs PnL) : {corr_slope:.3f}")
+
+
+# ── 6. Entry Quality ──────────────────────────────────────────────────────────
+
+if has_data("spread_at_entry") or has_data("slippage"):
+    section("🎯  ENTRY QUALITY")
+
+    if has_data("spread_at_entry"):
+        print(f"Avg spread at entry : {df['spread_at_entry'].mean():.4f}")
+        print(f"Max spread at entry : {df['spread_at_entry'].max():.4f}")
+        corr_spread = float(df["spread_at_entry"].corr(df["pnl"]))
+        print(f"Correlation (spread vs PnL): {corr_spread:.3f}")
+        if corr_spread < -0.2:
+            print("  ⚠️  Wider spreads at entry correlate with worse outcomes")
+
+    if has_data("slippage"):
+        print(f"\nAvg slippage (ask - mid) : {df['slippage'].mean():.4f}")
+        print(f"Max slippage             : {df['slippage'].max():.4f}")
+
+
+# ── 7. Directional Analysis ───────────────────────────────────────────────────
+
+section("📊  DIRECTIONAL ANALYSIS")
 
 for side in ["up", "down"]:
-    s = exits[exits["side"] == side]
-    if s.empty:
-        continue
-    sw = (s["outcome"] == "WIN").sum()
-    print(f"{side.upper():<6}  trades={len(s):>3}  WR={pct(sw, len(s)):>5.1f}%  "
-          f"PnL={s['pnl'].sum():>+.4f}")
+    s = df[df["side"] == side]
+    if len(s):
+        flag = "✓" if s["pnl"].sum() > 0 else "⚠️ "
+        print(f"{flag} {side.upper():<5}  trades={len(s):3d}  "
+              f"win%={s['win'].mean()*100:5.1f}%  "
+              f"pnl={s['pnl'].sum():+.4f}  avg={s['pnl'].mean():+.4f}")
 
-# =============================================================================
-#  8. Consecutive losses
-# =============================================================================
 
-max_consec = cur = 0
-streaks = []
-for outcome in exits["outcome"]:
-    if outcome == "LOSS":
-        cur += 1
-        max_consec = max(max_consec, cur)
-    else:
-        if cur:
-            streaks.append(cur)
-        cur = 0
-if cur:
-    streaks.append(cur)
+# ── 8. Risk Metrics ───────────────────────────────────────────────────────────
 
-print(f"\n{SEP}")
-print("⚠️   RISK METRICS")
-print(SEP)
-print(f"Max consecutive losses : {max_consec}")
-if streaks:
-    print(f"Avg loss streak        : {sum(streaks)/len(streaks):.1f}")
+section("⚠️   RISK METRICS")
 
-# =============================================================================
-#  9. Equity curve + drawdown
-# =============================================================================
+# Max consecutive losses
+max_cl = cur = 0
+for o in df["outcome"]:
+    cur = cur + 1 if o == "LOSS" else 0
+    max_cl = max(max_cl, cur)
+print(f"Max consecutive losses : {max_cl}")
 
-equity   = exits["pnl"].cumsum()
-peak     = equity.cummax()
-drawdown = peak - equity
-max_dd   = drawdown.max()
-recovery = abs(total_pnl) / max_dd if max_dd > 0 else float("inf")
+# Drawdown
+cumulative  = df["pnl"].cumsum()
+peak        = cumulative.cummax()
+drawdowns   = peak - cumulative
+max_dd      = float(drawdowns.max())
+peak_equity = float(peak.max())
+final_pnl   = float(df["pnl"].sum())
 
-print(f"\n{SEP}")
-print("📈  EQUITY CURVE")
-print(SEP)
-print(f"Final PnL       : {total_pnl:+.4f}")
-print(f"Peak equity     : {equity.max():.4f}")
-print(f"Max drawdown    : {max_dd:.4f}")
-print(f"Recovery factor : {recovery:.2f}")
+print(f"Max drawdown           : {max_dd:.4f}")
+if peak_equity > 0:
+    print(f"Max drawdown (%peak)   : {max_dd / peak_equity * 100:.1f}%")
+if max_dd > 0:
+    print(f"Recovery factor        : {abs(final_pnl) / max_dd:.2f}")
 
-# =============================================================================
-#  10. Recommendations
-# =============================================================================
 
-recs = []
+# ── 9. Hourly Performance ─────────────────────────────────────────────────────
+
+if "ts" in df.columns:
+    section("🕐  PERFORMANCE BY HOUR")
+
+    df["hour"] = pd.to_datetime(df["ts"]).dt.hour
+    hourly = (
+        df.groupby("hour")
+        .agg(trades=("pnl", "count"), win_rate=("win", "mean"), total_pnl=("pnl", "sum"))
+    )
+
+    print(f"{'Hour':<6} {'Trades':>7} {'Win%':>8} {'Total PnL':>12}")
+    print(SEP2)
+    for hour, row in hourly.iterrows():
+        flag = "✓" if row["total_pnl"] > 0 else "✗"
+        print(f"{hour:02d}:00  {int(row['trades']):>7} {row['win_rate']*100:>7.1f}%"
+              f" {row['total_pnl']:>12.4f}  {flag}")
+
+    worst_hour = int(hourly["total_pnl"].idxmin())
+    best_hour  = int(hourly["total_pnl"].idxmax())
+    print(f"\nBest hour  : {best_hour:02d}:00")
+    print(f"Worst hour : {worst_hour:02d}:00")
+
+
+# ── 10. Equity Curve Summary ──────────────────────────────────────────────────
+
+section("📈  EQUITY CURVE SUMMARY")
+print(f"Final PnL    : {final_pnl:+.4f}")
+print(f"Peak equity  : {peak_equity:.4f}")
+print(f"Max drawdown : {max_dd:.4f}")
+
+
+# ── 11. Actionable Recommendations ───────────────────────────────────────────
+
+section("🎯  ACTIONABLE RECOMMENDATIONS")
+
+recs: list[str] = []
 
 if expectancy < 0:
     recs.append("⚠️  Negative expectancy — strategy is losing money long-term")
 
-if profit_factor < 1.5:
-    recs.append(f"📉  Low profit factor ({profit_factor:.2f}) — improve entry selection or exit timing")
+if pf < 1.5:
+    recs.append(f"📉  Low profit factor ({pf:.2f}) — improve entry selection or exits")
 
-if rr_ratio < 1.5 and len(exits) >= 10:
-    recs.append(f"📊  R:R is {rr_ratio:.2f} — aim for 1.5+ (widen TP or tighten SL)")
+if rr < 1.5:
+    recs.append(f"📊  Poor risk/reward ({rr:.2f}) — consider wider TP or tighter SL")
 
-if avg_hold_losses > avg_hold_wins * 1.5 and avg_hold_wins > 0:
-    recs.append(f"⏱️  Set a time-stop at ~{avg_hold_wins * 1.2:.0f}s "
-                f"(losers held {avg_hold_losses / avg_hold_wins:.1f}× longer)")
+if avg_hold_wins > 0 and avg_hold_loss > avg_hold_wins * 1.5:
+    recs.append(
+        f"⏱️  Set time stop at {avg_hold_wins * 1.2:.0f}s — "
+        f"you hold losers {avg_hold_loss / avg_hold_wins:.1f}x longer than winners"
+    )
 
-if max_consec >= 4:
-    recs.append(f"🛑  {max_consec} consecutive losses seen — consider a circuit-breaker pause")
+if max_cl >= 4:
+    recs.append(f"🛑  Hard stop after {max(2, max_cl // 2)} consecutive losses")
 
-if "r2" in exits.columns:
-    r2_corr = exits["r2"].corr(exits["pnl"])
-    if not math.isnan(r2_corr) and r2_corr < 0.05:
-        recs.append("📐  R² shows near-zero correlation with PnL — consider raising trend_threshold")
+if corr_hold < -0.3:
+    recs.append("📉  Strong negative correlation (hold vs PnL) — shorten trade duration")
 
-print(f"\n{SEP}")
-print("🎯  RECOMMENDATIONS")
-print(SEP)
-if recs:
+# Worst hold bucket
+for name, lo, hi in HOLD_BUCKETS:
+    b = df[(df["hold_time"] >= lo) & (df["hold_time"] < hi)]
+    if len(b) >= 3 and float(b["pnl"].sum()) < 0:
+        recs.append(f"⛔  Worst hold bucket is {name} — avoid lingering in this range")
+        break
+
+# Market timing
+if has_data("mkt_elapsed_entry"):
+    for name, lo, hi in TIMING_BUCKETS:
+        b = df[(df["mkt_elapsed_entry"] >= lo) & (df["mkt_elapsed_entry"] < hi)]
+        if len(b) >= 3 and float(b["pnl"].sum()) < 0:
+            recs.append(
+                f"⏰  Avoid entering {lo}-{hi}s into the market window "
+                f"(bucket PnL: {b['pnl'].sum():+.4f})"
+            )
+
+# R² not predictive
+if has_data("r2") and total >= 20 and abs(corr_r2) < 0.1:
+    recs.append("📐  R² has no correlation with outcome — consider revising trend_threshold")
+
+# Directional bias
+for side in ["up", "down"]:
+    s = df[df["side"] == side]
+    if len(s) >= 5 and s["win"].mean() < 0.40:
+        recs.append(f"📉  {side.upper()} win rate is {s['win'].mean()*100:.0f}% — consider disabling this side")
+
+if not recs:
+    print("✅  No major issues detected. Keep following your plan.")
+else:
     for i, r in enumerate(recs, 1):
         print(f"{i}. {r}")
-else:
-    print("✅  No major issues detected.")
 
-print(f"\n{SEP}")
-print("✅  ANALYSIS COMPLETE")
-print(SEP)
+print(f"\n{SEP}\n✅  ANALYSIS COMPLETE\n{SEP}")

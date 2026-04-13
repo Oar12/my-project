@@ -12,7 +12,7 @@ sudo systemctl stop trend_bot.service
 sudo systemctl restart trend_bot.service
 
 # LIVE LOGS (BOT)
-journalctl -u trend_bot.service -f
+journalctl -u trend_bot.service -f -o cat
 
 # TRADE LOG FILE
 tail -f ~/mybot/trade_log.txt

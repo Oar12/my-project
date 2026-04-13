@@ -31,6 +31,14 @@ class Position:
     mkt_elapsed_at_entry: int = -1   # seconds since market opened
     mkt_remaining_at_entry: int = -1 # seconds left in market at entry
 
+    # Trailing stop watermark
+    best_price_seen: float = 0.0
+
+    def __post_init__(self):
+        """Initialize the high watermark to the entry price."""
+        if self.best_price_seen == 0.0:
+            self.best_price_seen = self.entry_price
+
     @property
     def take_profit_price(self) -> float:
         """Target price for take profit."""
@@ -38,8 +46,13 @@ class Position:
 
     @property
     def stop_loss_price(self) -> float:
-        """Target price for stop loss."""
-        return self.entry_price - self.stop_loss_delta
+        """Target price for stop loss. Now acts as a Trailing Stop."""
+        return self.best_price_seen - self.stop_loss_delta
+
+    def update_trailing_stop(self, current_price: float) -> None:
+        """Update the high watermark if the price moves in our favor."""
+        if current_price > self.best_price_seen:
+            self.best_price_seen = current_price
 
     def get_pnl(self, current_price: float) -> float:
         """Calculate unrealized PnL."""
@@ -211,6 +224,9 @@ class PositionManager:
             price = prices.get(position.side, 0)
             if price <= 0:
                 continue
+
+            # Update the high watermark before checking exits
+            position.update_trailing_stop(price)
 
             exit_type, pnl = self.check_exit(position.id, price)
             if exit_type:

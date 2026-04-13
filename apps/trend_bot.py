@@ -71,21 +71,21 @@ def _log(record: dict) -> None:
 # =============================================================================
 
 # ── Strategy parameters ───────────────────────────────────────────────────────
-LOOKBACK_SECONDS  = 30.0    # How far back (s) to look when computing the trend
+LOOKBACK_SECONDS  = 35.0    # How far back (s) to look when computing the trend
 MIN_SAMPLES       = 4       # Minimum price points required before signalling
 TREND_THRESHOLD   = 0.75    # Minimum R² score (0–1); higher = cleaner trend required
 MIN_PRICE_CHANGE  = 0.001  # Minimum avg per-sample move to ignore noise
 
 # ── Risk controls ─────────────────────────────────────────────────────────────
-TAKE_PROFIT   = 0.10   # Close trade when price rises this much above entry (USDC)
+TAKE_PROFIT   = 0.08   # Close trade when price rises this much above entry (USDC)
 STOP_LOSS     = 0.03    # Close trade when price falls this much below entry (USDC)
 MIN_SPREAD    = 0.04    # Skip entry if bid-ask spread is wider than this
 COOLDOWN      = 20.0    # Minimum seconds between consecutive entries
-MIN_HOLD_TIME = 10.0    # SL cannot fire before this many seconds in a position
+MIN_HOLD_TIME = 12.0    # SL cannot fire before this many seconds in a position
 MAX_POSITIONS = 1       # Maximum concurrent open positions
 
 # ── Trade sizing ──────────────────────────────────────────────────────────────
-SIZE_USDC = 5.0         # USDC to spend per trade
+SIZE_USDC = 10.0         # USDC to spend per trade
 
 # ── Bot settings ──────────────────────────────────────────────────────────────
 COIN           = "BTC"  # Coin market to trade (only BTC supported currently)
@@ -93,7 +93,7 @@ UI_REFRESH     = 0.5    # Terminal redraw interval in seconds
 LOG_BUFFER_SIZE = 8     # Number of recent log lines shown in the terminal UI
 
 # ── Market expiry guard ───────────────────────────────────────────────────────
-NO_ENTRY_BEFORE_EXPIRY = 45  # Don't enter a trade if market expires within this many seconds
+NO_ENTRY_BEFORE_EXPIRY = 59  # Don't enter a trade if market expires within this many seconds
 
 # =============================================================================
 #  AutoBot 
