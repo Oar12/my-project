@@ -84,6 +84,17 @@ class MarketInfo:
         except Exception:
             return None
 
+    def is_just_started(self, threshold_seconds: int = 55) -> bool:
+        """Check if market started within threshold."""
+        if not self.end_date:
+            return False
+        end_ts = self.end_timestamp()
+        if not end_ts:
+            return False
+        now_ts = int(time.time())
+        # Assume markets are 5 minutes long, so check if we're within the first `threshold_seconds` of the market
+        return (end_ts - now_ts) >= (5 * 60 - threshold_seconds)
+
     def is_ending_soon(self, threshold_seconds: int = 60) -> bool:
         """Check if market is ending within threshold."""
         mins, secs = self.get_countdown()

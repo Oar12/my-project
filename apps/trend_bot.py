@@ -73,15 +73,15 @@ def _log(record: dict) -> None:
 # ── Strategy parameters ───────────────────────────────────────────────────────
 LOOKBACK_SECONDS  = 35.0    # How far back (s) to look when computing the trend
 MIN_SAMPLES       = 4       # Minimum price points required before signalling
-TREND_THRESHOLD   = 0.75    # Minimum R² score (0–1); higher = cleaner trend required
+TREND_THRESHOLD   = 0.70    # Minimum R² score (0–1); higher = cleaner trend required
 MIN_PRICE_CHANGE  = 0.001  # Minimum avg per-sample move to ignore noise
 
 # ── Risk controls ─────────────────────────────────────────────────────────────
-TAKE_PROFIT   = 0.08   # Close trade when price rises this much above entry (USDC)
-STOP_LOSS     = 0.03    # Close trade when price falls this much below entry (USDC)
+TAKE_PROFIT   = 0.10   # Close trade when price rises this much above entry (USDC)
+STOP_LOSS     = 0.05    # Close trade when price falls this much below entry (USDC)
 MIN_SPREAD    = 0.04    # Skip entry if bid-ask spread is wider than this
 COOLDOWN      = 20.0    # Minimum seconds between consecutive entries
-MIN_HOLD_TIME = 12.0    # SL cannot fire before this many seconds in a position
+MIN_HOLD_TIME = 5.0    # SL cannot fire before this many seconds in a position
 MAX_POSITIONS = 1       # Maximum concurrent open positions
 
 # ── Trade sizing ──────────────────────────────────────────────────────────────
@@ -94,6 +94,7 @@ LOG_BUFFER_SIZE = 8     # Number of recent log lines shown in the terminal UI
 
 # ── Market expiry guard ───────────────────────────────────────────────────────
 NO_ENTRY_BEFORE_EXPIRY = 59  # Don't enter a trade if market expires within this many seconds
+NO_ENTRY_AT_START = 55       # Don't enter a trade if market started less than this many seconds ago
 
 # =============================================================================
 #  AutoBot 
@@ -247,10 +248,8 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
     async def _tick(self) -> None:
         prices = self._prices()
 
-        # 1. Check exits — but respect the min hold time before SL fires
+        # 1. Check exits
         for pos, exit_type, pnl in self.positions.check_all_exits(prices):
-            if exit_type == "stop_loss" and pos.get_hold_time() < self.min_hold_time:
-                continue
             await self._exit_position(pos, exit_type, pnl)
 
         # 2. Record prices into rolling history
@@ -268,7 +267,7 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
             return
 
         mkt = self.market.current_market
-        if mkt and mkt.is_ending_soon(NO_ENTRY_BEFORE_EXPIRY):
+        if mkt and (mkt.is_ending_soon(NO_ENTRY_BEFORE_EXPIRY) or mkt.is_just_started(NO_ENTRY_AT_START)):
             return
 
         # 4. Strategy evaluation
