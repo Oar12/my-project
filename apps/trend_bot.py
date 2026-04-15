@@ -26,6 +26,8 @@ import os
 import sys
 import time
 import argparse
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict
@@ -40,13 +42,13 @@ load_dotenv()
 # ── Project imports ───────────────────────────────────────────────────────────
 from src.config import Config
 from src.bot import TradingBot
+from lib.display import Display
 from lib.market_manager import MarketManager
 from lib.position_manager import PositionManager, Position
 from lib.price_tracker import PriceTracker
-from lib.console import Colors, format_countdown, LogBuffer
+from lib.console import Colors, LogBuffer
 from lib.bot_stats import BotStats
 from lib.btc_feed import BtcFeed
-from strategies import Signal, BaseStrategy, TrendFollowingStrategy
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.WARNING)
@@ -95,6 +97,152 @@ LOG_BUFFER_SIZE = 8     # Number of recent log lines shown in the terminal UI
 # ── Market expiry guard ───────────────────────────────────────────────────────
 NO_ENTRY_BEFORE_EXPIRY = 59  # Don't enter a trade if market expires within this many seconds
 NO_ENTRY_AT_START = 55       # Don't enter a trade if market started less than this many seconds ago
+
+
+@dataclass
+class Signal:
+    """A trading signal produced by a strategy."""
+
+    side: str
+    confidence: float
+    reason: str
+    slope: float = 0.0
+
+
+class BaseStrategy(ABC):
+    """Abstract base class for strategy implementations."""
+
+    @abstractmethod
+    def evaluate(
+        self,
+        up_mid: float,
+        down_mid: float,
+        up_bid: float,
+        up_ask: float,
+        down_bid: float,
+        down_ask: float,
+        tracker: PriceTracker,
+        btc: Optional[BtcFeed] = None,
+    ) -> Optional[Signal]:
+        """Return a Signal to enter a trade, or None to skip this tick."""
+
+
+class TrendFollowingStrategy(BaseStrategy):
+    """Trend-following strategy using linear regression slope + R^2."""
+
+    def __init__(
+        self,
+        lookback_seconds: float = 30.0,
+        min_samples: int = 4,
+        trend_threshold: float = 0.75,
+        min_price_change: float = 0.001,
+    ):
+        self.lookback_seconds = lookback_seconds
+        self.min_samples = min_samples
+        self.trend_threshold = trend_threshold
+        self.min_price_change = min_price_change
+
+    def _get_recent_history(self, tracker: PriceTracker, side: str, lookback: float) -> list:
+        """Return price history points from the last lookback seconds."""
+        history = tracker.get_history(side)
+        if not history:
+            return []
+        cutoff = time.time() - lookback
+        return [pt for pt in history if pt.timestamp >= cutoff]
+
+    def _is_price_safe(self, price: float) -> bool:
+        """Avoid entering when outcome is near-decided (price near 0 or 1)."""
+        return 0.20 <= price <= 0.80
+
+    def _regression_r2(self, history: list) -> tuple[float, float, float]:
+        """Compute linear regression slope, R^2, and total price change."""
+        if len(history) < 2:
+            return 0.0, 0.0, 0.0
+
+        x = [pt.timestamp for pt in history]
+        y = [pt.price for pt in history]
+        x0 = x[0]
+        xs = [t - x0 for t in x]
+
+        n = len(xs)
+        mean_x = sum(xs) / n
+        mean_y = sum(y) / n
+
+        ss_xx = sum((xi - mean_x) ** 2 for xi in xs)
+        ss_yy = sum((yi - mean_y) ** 2 for yi in y)
+        ss_xy = sum((xi - mean_x) * (yi - mean_y) for xi, yi in zip(xs, y))
+
+        if ss_xx == 0 or ss_yy == 0:
+            return 0.0, 0.0, 0.0
+
+        slope = ss_xy / ss_xx
+        intercept = mean_y - slope * mean_x
+        y_pred = [slope * xi + intercept for xi in xs]
+        ss_res = sum((yi - ypi) ** 2 for yi, ypi in zip(y, y_pred))
+        r2 = max(0.0, min(1.0, 1.0 - ss_res / ss_yy))
+
+        return slope, r2, y[-1] - y[0]
+
+    def evaluate(
+        self,
+        up_mid: float,
+        down_mid: float,
+        up_bid: float,
+        up_ask: float,
+        down_bid: float,
+        down_ask: float,
+        tracker: PriceTracker,
+        btc: Optional[BtcFeed] = None,
+    ) -> Optional[Signal]:
+        """Evaluate recent trend and return a Signal or None."""
+        up_history = self._get_recent_history(tracker, "up", self.lookback_seconds)
+        down_history = self._get_recent_history(tracker, "down", self.lookback_seconds)
+
+        if len(up_history) < self.min_samples and len(down_history) < self.min_samples:
+            return None
+
+        candidates: list[Signal] = []
+
+        if len(up_history) >= self.min_samples and self._is_price_safe(up_mid):
+            slope, r2, total_change = self._regression_r2(up_history)
+            avg_move = abs(total_change / max(1, len(up_history) - 1))
+            if slope > 0 and r2 >= self.trend_threshold and avg_move >= self.min_price_change:
+                candidates.append(
+                    Signal(
+                        side="up",
+                        confidence=r2,
+                        slope=slope,
+                        reason=f"UP trending up  Δ={total_change:+.4f}  R²={r2:.2f}  slope={slope:+.5f}",
+                    )
+                )
+
+        if len(down_history) >= self.min_samples and self._is_price_safe(down_mid):
+            slope, r2, total_change = self._regression_r2(down_history)
+            avg_move = abs(total_change / max(1, len(down_history) - 1))
+            if slope > 0 and r2 >= self.trend_threshold and avg_move >= self.min_price_change:
+                candidates.append(
+                    Signal(
+                        side="down",
+                        confidence=r2,
+                        slope=slope,
+                        reason=f"DOWN trending up  Δ={total_change:+.4f}  R²={r2:.2f}  slope={slope:+.5f}",
+                    )
+                )
+
+        if not candidates:
+            return None
+
+        best = max(candidates, key=lambda s: s.confidence)
+
+        if btc and btc.has_data:
+            btc_mom = btc.momentum(self.lookback_seconds)
+            if btc_mom is not None:
+                agrees = (btc_mom > 0 and best.side == "up") or (btc_mom < 0 and best.side == "down")
+                if not agrees:
+                    return None
+                best.reason += f"  BTC={btc_mom * 100:+.3f}%"
+
+        return best
 
 # =============================================================================
 #  AutoBot 
@@ -463,133 +611,6 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
                 "hold_time":   round(pos.get_hold_time(), 1),
                 "reason":      "market_rotation",
             })
-
-# =============================================================================
-#  Display
-# =============================================================================
-
-class Display:
-    """Renders the full bot state to the terminal in-place."""
-
-    WIDTH = 110
-
-    def __init__(self, bot: AutoBot, paper: bool, strategy_name: str):
-        self.bot           = bot
-        self.paper         = paper
-        self.strategy_name = strategy_name
-
-    def render(self) -> None:
-        W     = self.WIDTH
-        b     = self.bot
-        mkt   = b.market.current_market
-        stats = b.stats
-        lines: list[str] = []
-
-        # ── Header ────────────────────────────────────────────────────────────
-        mode = f"{Colors.YELLOW}PAPER{Colors.RESET}" if self.paper else f"{Colors.RED}LIVE{Colors.RESET}"
-        conn = f"{Colors.GREEN}● LIVE{Colors.RESET}" if b.market.is_connected else f"{Colors.YELLOW}○ …{Colors.RESET}"
-        cd = "--:--"
-        if mkt:
-            mins, secs = mkt.get_countdown()
-            cd = format_countdown(mins, secs)
-
-        lines.append(f"{Colors.BOLD}{'─'*W}{Colors.RESET}")
-        lines.append(
-            f"  {Colors.BOLD}AutoBot{Colors.RESET}  │  {b.coin}  │  "
-            f"Strategy = {Colors.CYAN}{self.strategy_name}{Colors.RESET}  │  "
-            f"Mode = {mode}  │  {conn}  │  ends in {cd}  │  up {stats.uptime}"
-        )
-        lines.append(f"{Colors.BOLD}{'─'*W}{Colors.RESET}")
-
-        # ── Market question ───────────────────────────────────────────────────
-        q = mkt.question[:70] if mkt else "Discovering market…"
-        lines.append(f"  {Colors.DIM}{q}{Colors.RESET}")
-        lines.append("")
-
-        # ── BTC feed row ──────────────────────────────────────────────────────
-        btc      = b.btc
-        btc_conn = (f"{Colors.GREEN}● Binance{Colors.RESET}"
-                    if btc.is_connected else f"{Colors.YELLOW}○ Binance{Colors.RESET}")
-        btc_price_str = f"${btc.price:,.2f}" if btc.has_data else "--"
-        btc_mom30 = btc.momentum(30)
-        btc_vol60 = btc.volatility(60)
-        mom_str   = f"{btc_mom30*100:+.3f}%" if btc_mom30 is not None else "--"
-        mom_col   = Colors.GREEN if (btc_mom30 or 0) >= 0 else Colors.RED
-        vol_str   = f"{btc_vol60*100:.3f}%" if btc_vol60 > 0 else "--"
-
-        lines.append(
-            f"  {btc_conn}  BTC {Colors.BOLD}{btc_price_str}{Colors.RESET}  │  "
-            f"30s Momentum = {mom_col}{mom_str}{Colors.RESET}  │  "
-            f"60s Volatility = {vol_str}"
-        )
-        lines.append("")
-
-        # ── Orderbook prices ──────────────────────────────────────────────────
-        up_ob   = b.market.get_orderbook("up")
-        down_ob = b.market.get_orderbook("down")
-
-        def fmt(v: float) -> str:
-            return f"{v:.4f}" if v > 0 else "   --  "
-
-        up_mid   = up_ob.mid_price   if up_ob   else 0.0
-        down_mid = down_ob.mid_price if down_ob else 0.0
-        up_bid   = up_ob.best_bid    if up_ob   else 0.0
-        up_ask   = up_ob.best_ask    if up_ob   else 0.0
-        down_bid = down_ob.best_bid  if down_ob else 0.0
-        down_ask = down_ob.best_ask  if down_ob else 0.0
-        up_sp    = b.market.get_spread("up")
-        down_sp  = b.market.get_spread("down")
-
-        lines.append(f"  {'':6}  {'UP':^18}   {'DOWN':^18}")
-        lines.append(f"  {'Bid':<6}  {Colors.GREEN}{fmt(up_bid):^18}{Colors.RESET}   {Colors.RED}{fmt(down_bid):^18}{Colors.RESET}")
-        lines.append(f"  {'Ask':<6}  {Colors.GREEN}{Colors.BOLD}{fmt(up_ask):^18}{Colors.RESET}   {Colors.RED}{Colors.BOLD}{fmt(down_ask):^18}{Colors.RESET}")
-        lines.append(f"  {'Spread':<6}  {up_sp:^18.4f}   {down_sp:^18.4f}")
-        lines.append("")
-
-        # ── Open positions ────────────────────────────────────────────────────
-        lines.append(f"  {Colors.BOLD}Open Positions{Colors.RESET}")
-        open_pos = b.positions.get_all_positions()
-        if not open_pos:
-            lines.append(f"  {Colors.DIM}  (none){Colors.RESET}")
-        else:
-            for pos in open_pos:
-                cur  = up_mid if pos.side == "up" else down_mid
-                upnl = pos.get_pnl(cur)
-                pc   = Colors.GREEN if upnl >= 0 else Colors.RED
-                sc   = Colors.GREEN if pos.side == "up" else Colors.RED
-                age  = int(pos.get_hold_time())
-                lines.append(
-                    f"  {sc}{pos.side.upper()}{Colors.RESET}  "
-                    f"entry={pos.entry_price:.4f}  now={cur:.4f}  "
-                    f"uPnL={pc}{upnl:+.4f}{Colors.RESET}  age={age}s  "
-                    f"TP={pos.take_profit_price:.4f}  SL={pos.stop_loss_price:.4f}"
-                )
-        lines.append("")
-
-        # ── Session stats ─────────────────────────────────────────────────────
-        pnl_color = Colors.GREEN if stats.total_pnl >= 0 else Colors.RED
-        lines.append(
-            f"  {Colors.BOLD}Stats{Colors.RESET}  "
-            f"placed={stats.trades_placed}  closed={stats.trades_closed}  "
-            f"W/L={stats.wins}/{stats.losses}  WR={stats.win_rate:.0f}%  "
-            f"PnL={pnl_color}{stats.total_pnl:+.4f} USDC{Colors.RESET}"
-        )
-        lines.append(
-            f"  cooldown={b.cooldown:.0f}s  min_hold={b.min_hold_time:.0f}s  "
-            f"size=${b.size_usdc:.2f}  spread_max={b.min_spread:.3f}  "
-            f"max_pos={b.positions.max_positions}"
-        )
-        lines.append("")
-
-        # ── Log ───────────────────────────────────────────────────────────────
-        lines.append(f"  {Colors.BOLD}Log{Colors.RESET}")
-        for line in b.log.get_messages():
-            lines.append(f"  {line}")
-        lines.append("")
-        lines.append(f"  {Colors.DIM}Press Ctrl+C to stop{Colors.RESET}")
-        lines.append(f"{Colors.BOLD}{'─'*W}{Colors.RESET}")
-
-        print("\033[H\033[J" + "\n".join(lines), flush=True)
 
 # =============================================================================
 #  Entry point

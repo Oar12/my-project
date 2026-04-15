@@ -1,6 +1,6 @@
 import json
 from typing import Optional, Dict, Any, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from .http import ThreadLocalSessionMixin
 
@@ -82,11 +82,9 @@ class GammaClient(ThreadLocalSessionMixin):
         now = datetime.now(timezone.utc)
 
         # Calculate next 5-minute window
-        minute = ((now.minute // 5) + 1) * 5
-        if minute >= 60:
-            next_window = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
-        else:
-            next_window = now.replace(minute=minute, second=0, microsecond=0)
+        current_window = now.replace(second=0, microsecond=0)
+        current_window = current_window.replace(minute=(now.minute // 5) * 5)
+        next_window = current_window + timedelta(minutes=5)
 
         next_ts = int(next_window.timestamp())
         slug = f"{prefix}-{next_ts}"
