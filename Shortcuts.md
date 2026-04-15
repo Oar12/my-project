@@ -15,8 +15,8 @@ sudo systemctl restart trend_bot.service
 journalctl -u trend_bot.service -f -o cat
 
 # TRADE LOG FILE
-tail -f ~/mybot/trade_log.txt
-tail -n 50 ~/mybot/trade_log.txt
+tail -f ~/mybot/trade_log.jsonl
+tail -n 50 ~/mybot/trade_log.jsonl
 
 # SYSTEM HEALTH
 uptime
@@ -37,9 +37,4 @@ cd ~/mybot && git pull
 sudo systemctl restart trend_bot.service
 
 # EMERGENCY CHECK (FULL STATUS)
-echo "=== SYSTEM ===" && uptime && \
-echo "=== RAM ===" && free -h && \
-echo "=== DISK ===" && df -h && \
-echo "=== BOT ===" && systemctl is-active trend_bot.service && \
-echo "=== TEMP ===" && vcgencmd measure_temp && \
-echo "=== TAILSCALE ===" && tailscale ip -4
+/usr/local/bin/bot_health.sh

@@ -279,11 +279,10 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
 
         self.market    = MarketManager(coin=coin)
         self.tracker   = PriceTracker(lookback_seconds=60, max_history=500)
-        self.positions = PositionManager(
-            take_profit=take_profit,
-            stop_loss=stop_loss,
-            max_positions=max_positions,
-        )
+        self.positions = PositionManager()
+        self.positions.take_profit = take_profit
+        self.positions.stop_loss = stop_loss
+        self.positions.max_positions = max_positions
         self.stats = BotStats()
         self.log   = LogBuffer(max_size=LOG_BUFFER_SIZE)
         self.btc   = BtcFeed()
@@ -401,7 +400,9 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
 
         # 1. Check exits
         for pos, exit_type, pnl in self.positions.check_all_exits(prices):
-            await self._exit_position(pos, exit_type, pnl)
+            if exit_type == "stop_loss" and pos.get_hold_time() < self.min_hold_time:
+                continue
+            await self._exit_position(pos, exit_type if exit_type else "UNKNOWN", pnl)
 
         # 2. Record prices into rolling history
         self.tracker.record_prices(prices)
@@ -455,32 +456,42 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
 
         size     = self.size_usdc / entry_price
         order_id: Optional[str] = None
-
-        if not self.paper and self.bot and self.market.current_market:
-            token_id = self.market.current_market.token_ids.get(signal.side, "")
-            if token_id:
-                result = await self.bot.place_order(
-                    token_id=token_id,
-                    price=round(entry_price, 4),
-                    size=round(size, 2),
-                    side="BUY",
-                )
-                if not result.success:
-                    self.log.add(f"Order FAILED: {result.message}", "error")
-                    _log({
-                        "event":   "ORDER_FAILED",
-                        "side":    signal.side,
-                        "price":   round(entry_price, 4),
-                        "size":    round(size, 2),
-                        "reason":  result.message,
-                    })
-                    return
-                order_id = result.order_id
-
         token_id = (
             self.market.current_market.token_ids.get(signal.side, "")
             if self.market.current_market else ""
         )
+
+        if not self.paper and self.bot and self.market.current_market:
+            if not token_id:
+                reason = "Missing token_id for selected side"
+                self.log.add(f"Order FAILED: {reason}", "error")
+                _log({
+                    "event":   "ORDER_FAILED",
+                    "side":    signal.side,
+                    "price":   round(entry_price, 4),
+                    "size":    round(size, 2),
+                    "reason":  reason,
+                })
+                return
+
+            result = await self.bot.place_order(
+                token_id=token_id,
+                price=round(entry_price, 4),
+                size=round(size, 2),
+                side="BUY",
+            )
+            if not result.success:
+                self.log.add(f"Order FAILED: {result.message}", "error")
+                _log({
+                    "event":   "ORDER_FAILED",
+                    "side":    signal.side,
+                    "price":   round(entry_price, 4),
+                    "size":    round(size, 2),
+                    "reason":  result.message,
+                })
+                return
+            order_id = result.order_id
+
         pos = self.positions.open_position(
             side=signal.side,
             token_id=token_id,
@@ -540,9 +551,50 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
 
     async def _exit_position(self, pos: Position, exit_type: str, pnl: float) -> None:
         current_price = self._mid(pos.side)
+        if current_price <= 0:
+            current_price = pos.entry_price
 
-        if not self.paper and self.bot and pos.order_id:
-            pass  # TODO: place SELL order in live mode
+        if not self.paper and self.bot:
+            if pos.order_id is None:
+                self.log.add(
+                    f"EXIT {pos.side.upper()} without entry order_id; attempting live SELL anyway",
+                    "warning",
+                )
+            sell_price = self._mid(pos.side)
+            if sell_price <= 0:
+                self.log.add(
+                    f"SELL skipped for {pos.side.upper()} - invalid current price",
+                    "warning",
+                )
+                return
+
+            if not self.market.current_market:
+                self.log.add("SELL skipped - no active market", "warning")
+                return
+
+            token_id = self.market.current_market.token_ids.get(pos.side, "")
+            if not token_id:
+                self.log.add(f"SELL skipped - missing token_id for {pos.side.upper()}", "warning")
+                return
+
+            result = await self.bot.place_order(
+                token_id=token_id,
+                price=round(sell_price, 4),
+                size=round(pos.size, 2),
+                side="SELL",
+            )
+            if not result.success:
+                self.log.add(f"SELL order FAILED: {result.message}", "error")
+                _log({
+                    "event":   "SELL_FAILED",
+                    "side":    pos.side,
+                    "price":   round(sell_price, 4),
+                    "size":    round(pos.size, 2),
+                    "reason":  result.message,
+                })
+                return
+
+            current_price = sell_price
 
         self.positions.close_position(pos.id, pnl)
         self.stats.trades_closed += 1
@@ -673,6 +725,7 @@ async def main_async(args: argparse.Namespace) -> None:
     )
 
     display = Display(auto, paper, "trend")
+    auto._running = True
 
     async def ui_loop():
         while auto._running:
