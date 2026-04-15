@@ -1,6 +1,7 @@
 # Session-wide performance metrics for any trading bot.
 
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 
@@ -13,6 +14,11 @@ class BotStats:
     losses:        int  = 0
     total_pnl:     float = 0.0
     start_time:    float = field(default_factory=time.time)
+    last_trades:   deque = field(default_factory=lambda: deque(maxlen=10))
+
+    def record_trade(self, win: bool, pnl: float) -> None:
+        """Prepend a closed trade to the last-10 history (newest first)."""
+        self.last_trades.appendleft((win, pnl))
 
     @property
     def win_rate(self) -> float:

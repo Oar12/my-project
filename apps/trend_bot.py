@@ -73,21 +73,21 @@ def _log(record: dict) -> None:
 # =============================================================================
 
 # ── Strategy parameters ───────────────────────────────────────────────────────
-LOOKBACK_SECONDS  = 35.0    # How far back (s) to look when computing the trend
-MIN_SAMPLES       = 4       # Minimum price points required before signalling
-TREND_THRESHOLD   = 0.70    # Minimum R² score (0–1); higher = cleaner trend required
-MIN_PRICE_CHANGE  = 0.001  # Minimum avg per-sample move to ignore noise
+LOOKBACK_SECONDS  = 45.0    # How far back (s) to look when computing the trend
+MIN_SAMPLES       = 2       # Minimum price points required before signalling
+TREND_THRESHOLD   = 0.30    # Minimum R² score (0–1); higher = cleaner trend required
+MIN_PRICE_CHANGE  = 0.0005  # Minimum avg per-sample move to ignore noise
 
 # ── Risk controls ─────────────────────────────────────────────────────────────
 TAKE_PROFIT   = 0.10   # Close trade when price rises this much above entry (USDC)
-STOP_LOSS     = 0.05    # Close trade when price falls this much below entry (USDC)
+STOP_LOSS     = 0.10    # Close trade when price falls this much below entry (USDC)
 MIN_SPREAD    = 0.04    # Skip entry if bid-ask spread is wider than this
-COOLDOWN      = 20.0    # Minimum seconds between consecutive entries
-MIN_HOLD_TIME = 5.0    # SL cannot fire before this many seconds in a position
-MAX_POSITIONS = 1       # Maximum concurrent open positions
+COOLDOWN      = 1.0    # Minimum seconds between consecutive entries
+MIN_HOLD_TIME = 1.0    # SL cannot fire before this many seconds in a position
+MAX_POSITIONS = 5       # Maximum concurrent open positions
 
 # ── Trade sizing ──────────────────────────────────────────────────────────────
-SIZE_USDC = 10.0         # USDC to spend per trade
+SIZE_USDC = 1000.0         # USDC to spend per trade
 
 # ── Bot settings ──────────────────────────────────────────────────────────────
 COIN           = "BTC"  # Coin market to trade (only BTC supported currently)
@@ -95,12 +95,13 @@ UI_REFRESH     = 0.5    # Terminal redraw interval in seconds
 LOG_BUFFER_SIZE = 8     # Number of recent log lines shown in the terminal UI
 
 # ── Market expiry guard ───────────────────────────────────────────────────────
-NO_ENTRY_AT_START = 55       # Don't enter a trade if market started less than this many seconds ago
-NO_ENTRY_BEFORE_EXPIRY = 59  # Don't enter a trade if market expires within this many seconds
+NO_ENTRY_AT_START = 0       # Don't enter a trade if market started less than this many seconds ago
+NO_ENTRY_BEFORE_EXPIRY = 0  # Don't enter a trade if market expires within this many seconds
+FORCE_EXIT_BEFORE_EXPIRY = 10  # Force-close open positions this many seconds before expiry (0 disables)
 
 # ── Entry price safety band ───────────────────────────────────────────────────
-MIN_ENTRY_PRICE = 0.20  # Avoid entering when outcome price is too close to 0
-MAX_ENTRY_PRICE = 0.80  # Avoid entering when outcome price is too close to 1
+MIN_ENTRY_PRICE = 0.01  # Avoid entering when outcome price is too close to 0
+MAX_ENTRY_PRICE = 0.99  # Avoid entering when outcome price is too close to 1
 
 @dataclass
 class Signal:
@@ -265,6 +266,7 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
         min_spread: float,
         cooldown: float,
         min_hold_time: float,
+        force_exit_before: int,
         paper: bool,
         bot: Optional[TradingBot] = None,
     ):
@@ -274,6 +276,7 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
         self.min_spread    = min_spread
         self.cooldown      = cooldown
         self.min_hold_time = min_hold_time
+        self.force_exit_before = force_exit_before
         self.paper         = paper
         self.bot           = bot
 
@@ -397,12 +400,23 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
 
     async def _tick(self) -> None:
         prices = self._prices()
+        mkt = self.market.current_market
 
         # 1. Check exits
         for pos, exit_type, pnl in self.positions.check_all_exits(prices):
             if exit_type == "stop_loss" and pos.get_hold_time() < self.min_hold_time:
                 continue
             await self._exit_position(pos, exit_type if exit_type else "UNKNOWN", pnl)
+
+        # 1b. Force time-based exits shortly before expiry
+        if mkt and self.force_exit_before > 0 and mkt.is_ending_soon(self.force_exit_before):
+            for pos in self.positions.get_all_positions():
+                px = prices.get(pos.side, 0.0)
+                if px <= 0:
+                    continue
+                pnl = pos.get_pnl(px)
+                await self._exit_position(pos, f"TIME_EXIT_{self.force_exit_before}s", pnl)
+            return
 
         # 2. Record prices into rolling history
         self.tracker.record_prices(prices)
@@ -418,7 +432,6 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
         if up_mid <= 0 or down_mid <= 0:
             return
 
-        mkt = self.market.current_market
         if mkt and (mkt.is_ending_soon(NO_ENTRY_BEFORE_EXPIRY) or mkt.is_just_started(NO_ENTRY_AT_START)):
             return
 
@@ -526,10 +539,16 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
         self._last_trade_time = time.time()
         self.stats.trades_placed += 1
 
-        mode_tag = "[PAPER]" if self.paper else "[LIVE]"
+        mode_prefix = "[PAPER] " if self.paper else ""
+        if mkt_elapsed >= 0:
+            em, es = divmod(mkt_elapsed, 60)
+            entry_str = f"{em}:{es:02d}"
+        else:
+            entry_str = "?"
         self.log.add(
-            f"{mode_tag} BUY {signal.side.upper()} @ {entry_price:.4f}  "
-            f"${self.size_usdc:.2f}  conf={signal.confidence:.2f}  ({signal.reason})",
+            f"{mode_prefix}BUY {signal.side.upper()} @ {entry_price:.4f}  "
+            f"${self.size_usdc:.2f}  R²={signal.confidence:.2f}  "
+            f"(Entry: {entry_str})",
             "trade",
         )
         _log({
@@ -599,6 +618,7 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
         self.positions.close_position(pos.id, pnl)
         self.stats.trades_closed += 1
         self.stats.total_pnl += pnl
+        self.stats.record_trade(pnl >= 0, pnl)
 
         if pnl >= 0:
             self.stats.wins += 1
@@ -652,6 +672,7 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
             self.positions.close_position(pos.id, pnl)
             self.stats.trades_closed += 1
             self.stats.total_pnl += pnl
+            self.stats.record_trade(pnl >= 0, pnl)
             self.log.add(
                 f"FORCE-CLOSE {pos.side.upper()} (market rotation) PnL {pnl:+.4f}",
                 "warning",
@@ -684,6 +705,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-spread", type=float, default=MIN_SPREAD,    help="Max allowed spread")
     p.add_argument("--cooldown",   type=float, default=COOLDOWN,      help="Seconds between trades")
     p.add_argument("--min-hold",   type=float, default=MIN_HOLD_TIME, help="Seconds before SL can fire")
+    p.add_argument("--force-exit-before", type=int, default=FORCE_EXIT_BEFORE_EXPIRY,
+                   help="Force-close open positions this many seconds before market expiry (0 disables)")
     p.add_argument("--paper",      action="store_true",               help="Paper-trade (no real orders)")
     p.add_argument("--refresh",    type=float, default=UI_REFRESH,    help="UI refresh interval (s)")
     return p
@@ -720,6 +743,7 @@ async def main_async(args: argparse.Namespace) -> None:
         min_spread    = args.min_spread,
         cooldown      = args.cooldown,
         min_hold_time = args.min_hold,
+        force_exit_before = args.force_exit_before,
         paper         = paper,
         bot           = trading_bot,
     )

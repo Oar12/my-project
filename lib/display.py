@@ -1,8 +1,21 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from lib.console import Colors, clear_and_print, format_countdown
+
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def _vis_len(s: str) -> int:
+    """Visible (printable) length of a string, ignoring ANSI escape codes."""
+    return len(_ANSI_RE.sub("", s))
+
+
+def _pad_vis(s: str, width: int) -> str:
+    """Pad *s* to *width* visible characters (ANSI-aware)."""
+    return s + " " * max(0, width - _vis_len(s))
 
 if TYPE_CHECKING:
     from apps.trend_bot import AutoBot
@@ -60,14 +73,7 @@ class Display:
         mom_col = Colors.GREEN if (btc_mom30 or 0) >= 0 else Colors.RED
         vol_str = f"{btc_vol60 * 100:.3f}%" if btc_vol60 > 0 else "--"
 
-        lines.append(
-            f"  {btc_conn}  BTC {Colors.BOLD}{btc_price_str}{Colors.RESET}  │  "
-            f"30s Momentum = {mom_col}{mom_str}{Colors.RESET}  │  "
-            f"60s Volatility = {vol_str}"
-        )
-        lines.append("")
-
-        # Orderbook prices
+        # ── Build orderbook data ───────────────────────────────────────────────
         up_ob = b.market.get_orderbook("up")
         down_ob = b.market.get_orderbook("down")
 
@@ -83,16 +89,47 @@ class Display:
         up_sp = b.market.get_spread("up")
         down_sp = b.market.get_spread("down")
 
-        lines.append(f"  {'':6}  {'UP':^18}   {'DOWN':^18}")
-        lines.append(
-            f"  {'Bid':<6}  {Colors.GREEN}{fmt(up_bid):^18}{Colors.RESET}   "
-            f"{Colors.RED}{fmt(down_bid):^18}{Colors.RESET}"
-        )
-        lines.append(
-            f"  {'Ask':<6}  {Colors.GREEN}{Colors.BOLD}{fmt(up_ask):^18}{Colors.RESET}   "
-            f"{Colors.RED}{Colors.BOLD}{fmt(down_ask):^18}{Colors.RESET}"
-        )
-        lines.append(f"  {'Spread':<6}  {up_sp:^18.4f}   {down_sp:^18.4f}")
+        # ── Right panel: Last 10 Trades ────────────────────────────────────────
+        SPLIT = 80  # visible column where right panel begins
+        sep = f"{Colors.DIM}│{Colors.RESET}"
+        right_panel: list[str] = [
+            f"{sep} {Colors.BOLD}Last 10 Trades:{Colors.RESET}",
+        ]
+        for win, pnl in list(b.stats.last_trades):
+            sym = "W+" if win else "L-"
+            col = Colors.GREEN if win else Colors.RED
+            right_panel.append(f"{sep} {col}{sym} PnL {pnl:+.4f}{Colors.RESET}")
+        # Fill remaining slots up to 10 trades
+        for _ in range(10 - len(b.stats.last_trades)):
+            right_panel.append(f"{sep}  {Colors.DIM}---{Colors.RESET}")
+
+        # ── Left rows (parallel with right panel) ──────────────────────────────
+        left_rows = [
+            (   # Row 0 → right panel row 0 (Last 10 Trades header)
+                f"  {btc_conn}  BTC {Colors.BOLD}{btc_price_str}{Colors.RESET}  │  "
+                f"30s Mom = {mom_col}{mom_str}{Colors.RESET}  │  "
+                f"60s Vol = {vol_str}"
+            ),
+            "",  # Row 1 → trade[0]
+            f"  {'':6}  {'UP':^18}   {'DOWN':^18}",  # Row 2 → trade[1]
+            (   # Row 3 → trade[2]
+                f"  {'Bid':<6}  {Colors.GREEN}{fmt(up_bid):^18}{Colors.RESET}   "
+                f"{Colors.RED}{fmt(down_bid):^18}{Colors.RESET}"
+            ),
+            (   # Row 4 → trade[3]
+                f"  {'Ask':<6}  {Colors.GREEN}{Colors.BOLD}{fmt(up_ask):^18}{Colors.RESET}   "
+                f"{Colors.RED}{Colors.BOLD}{fmt(down_ask):^18}{Colors.RESET}"
+            ),
+            f"  {'Spread':<6}  {up_sp:^18.4f}   {down_sp:^18.4f}",  # Row 5 → trade[4]
+            "",  # Row 6 → trade[5]
+            "",  # Row 7 → trade[6]
+            "",  # Row 8 → trade[7]
+            "",  # Row 9 → trade[8]
+            "",  # Row 10 → trade[9]
+        ]
+
+        for left, right in zip(left_rows, right_panel):
+            lines.append(_pad_vis(left, SPLIT) + right)
         lines.append("")
 
         # Open positions
@@ -125,8 +162,8 @@ class Display:
         )
         lines.append(
             f"  cooldown={b.cooldown:.0f}s  min_hold={b.min_hold_time:.0f}s  "
-            f"size=${b.size_usdc:.2f}  spread_max={b.min_spread:.3f}  "
-            f"max_pos={b.positions.max_positions}"
+            f"size=${b.size_usdc:.2f}  max_pos={b.positions.max_positions}  "
+            f"TP={b.positions.take_profit * 100:.0f}%  SL={b.positions.stop_loss * 100:.0f}%"
         )
         lines.append("")
 
