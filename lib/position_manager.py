@@ -5,6 +5,7 @@ from typing import Optional, Dict, List, Literal
 
 
 ExitType = Literal["take_profit", "stop_loss", None]
+PRICE_COMPARE_EPSILON = 1e-9
 
 
 @dataclass
@@ -74,7 +75,7 @@ class Position:
 
     def check_stop_loss(self, current_price: float) -> bool:
         """Check if stop loss is triggered."""
-        return current_price <= self.stop_loss_price
+        return current_price <= self.stop_loss_price + PRICE_COMPARE_EPSILON
 
 
 @dataclass

@@ -95,9 +95,12 @@ UI_REFRESH     = 0.5    # Terminal redraw interval in seconds
 LOG_BUFFER_SIZE = 8     # Number of recent log lines shown in the terminal UI
 
 # ── Market expiry guard ───────────────────────────────────────────────────────
-NO_ENTRY_BEFORE_EXPIRY = 59  # Don't enter a trade if market expires within this many seconds
 NO_ENTRY_AT_START = 55       # Don't enter a trade if market started less than this many seconds ago
+NO_ENTRY_BEFORE_EXPIRY = 59  # Don't enter a trade if market expires within this many seconds
 
+# ── Entry price safety band ───────────────────────────────────────────────────
+MIN_ENTRY_PRICE = 0.20  # Avoid entering when outcome price is too close to 0
+MAX_ENTRY_PRICE = 0.80  # Avoid entering when outcome price is too close to 1
 
 @dataclass
 class Signal:
@@ -152,7 +155,7 @@ class TrendFollowingStrategy(BaseStrategy):
 
     def _is_price_safe(self, price: float) -> bool:
         """Avoid entering when outcome is near-decided (price near 0 or 1)."""
-        return 0.20 <= price <= 0.80
+        return MIN_ENTRY_PRICE <= price <= MAX_ENTRY_PRICE
 
     def _regression_r2(self, history: list) -> tuple[float, float, float]:
         """Compute linear regression slope, R^2, and total price change."""
