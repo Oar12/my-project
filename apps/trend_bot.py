@@ -49,6 +49,8 @@ from lib.price_tracker import PriceTracker
 from lib.console import Colors, LogBuffer
 from lib.bot_stats import BotStats
 from lib.btc_feed import BtcFeed
+from lib.notifications import NotificationRouter, NotificationEvent
+from lib.api_server import get_state_manager, get_api_server
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.WARNING)
@@ -74,20 +76,20 @@ def _log(record: dict) -> None:
 
 # ── Strategy parameters ───────────────────────────────────────────────────────
 LOOKBACK_SECONDS  = 45.0    # How far back (s) to look when computing the trend
-MIN_SAMPLES       = 2       # Minimum price points required before signalling
-TREND_THRESHOLD   = 0.30    # Minimum R² score (0–1); higher = cleaner trend required
-MIN_PRICE_CHANGE  = 0.0005  # Minimum avg per-sample move to ignore noise
+MIN_SAMPLES       = 3       # Minimum price points required before signalling
+TREND_THRESHOLD   = 0.50    # Minimum R² score (0–1); higher = cleaner trend required
+MIN_PRICE_CHANGE  = 0.0008  # Minimum avg per-sample move to ignore noise
 
 # ── Risk controls ─────────────────────────────────────────────────────────────
-TAKE_PROFIT   = 0.10   # Close trade when price rises this much above entry (USDC)
-STOP_LOSS     = 0.10    # Close trade when price falls this much below entry (USDC)
+TAKE_PROFIT   = 0.60    # Close trade when price rises this much above entry (USDC)
+STOP_LOSS     = 0.05    # Close trade when price falls this much below entry (USDC)
 MIN_SPREAD    = 0.04    # Skip entry if bid-ask spread is wider than this
-COOLDOWN      = 1.0    # Minimum seconds between consecutive entries
-MIN_HOLD_TIME = 1.0    # SL cannot fire before this many seconds in a position
-MAX_POSITIONS = 5       # Maximum concurrent open positions
+COOLDOWN      = 10.0    # Minimum seconds between consecutive entries
+MIN_HOLD_TIME = 6.0     # SL cannot fire before this many seconds in a position
+MAX_POSITIONS = 1       # Maximum concurrent open positions
 
 # ── Trade sizing ──────────────────────────────────────────────────────────────
-SIZE_USDC = 1000.0         # USDC to spend per trade
+SIZE_USDC = 100.0         # USDC to spend per trade
 
 # ── Bot settings ──────────────────────────────────────────────────────────────
 COIN           = "BTC"  # Coin market to trade (only BTC supported currently)
@@ -95,13 +97,13 @@ UI_REFRESH     = 0.5    # Terminal redraw interval in seconds
 LOG_BUFFER_SIZE = 8     # Number of recent log lines shown in the terminal UI
 
 # ── Market expiry guard ───────────────────────────────────────────────────────
-NO_ENTRY_AT_START = 0       # Don't enter a trade if market started less than this many seconds ago
-NO_ENTRY_BEFORE_EXPIRY = 0  # Don't enter a trade if market expires within this many seconds
+NO_ENTRY_AT_START = 20       # Don't enter a trade if market started less than this many seconds ago
+NO_ENTRY_BEFORE_EXPIRY = 20  # Don't enter a trade if market expires within this many seconds
 FORCE_EXIT_BEFORE_EXPIRY = 10  # Force-close open positions this many seconds before expiry (0 disables)
 
 # ── Entry price safety band ───────────────────────────────────────────────────
 MIN_ENTRY_PRICE = 0.01  # Avoid entering when outcome price is too close to 0
-MAX_ENTRY_PRICE = 0.99  # Avoid entering when outcome price is too close to 1
+MAX_ENTRY_PRICE = 0.70  # Avoid entering when outcome price is too close to 1
 
 @dataclass
 class Signal:
@@ -290,8 +292,13 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
         self.log   = LogBuffer(max_size=LOG_BUFFER_SIZE)
         self.btc   = BtcFeed()
 
+        self._bankroll: float = size_usdc
         self._last_trade_time: float = 0.0
         self._running = False
+
+        # ── API and notification integration ────────────────────────────────
+        self.notifier = NotificationRouter()
+        self.api_state = get_state_manager()
 
     # ── Price helpers ─────────────────────────────────────────────────────────
 
@@ -307,6 +314,210 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
 
     def _prices(self) -> Dict[str, float]:
         return {"up": self._mid("up"), "down": self._mid("down")}
+
+    # ── API and notification helpers ──────────────────────────────────────────
+
+    def _update_api_state(self) -> None:
+        """Update API state with current bot stats."""
+        # BTC feed fields
+        btc_mom30 = self.btc.momentum(30)
+        btc_vol60 = self.btc.volatility(60)
+
+        # Market countdown
+        mkt = self.market.current_market
+        if mkt:
+            mins, secs = mkt.get_countdown()
+            market_countdown = f"{mins:02d}:{secs:02d}" if mins >= 0 else "--:--"
+        else:
+            market_countdown = "--:--"
+
+        self.api_state.current_stats = {
+            "total_pnl": round(self.stats.total_pnl, 4),
+            "win_rate": round(self.stats.win_rate, 1),
+            "wins": self.stats.wins,
+            "losses": self.stats.losses,
+            "trades_placed": self.stats.trades_placed,
+            "trades_closed": self.stats.trades_closed,
+            "bankroll": round(self._bankroll, 2),
+            "position_count": len(self.positions.get_all_positions()),
+            "is_running": self._running,
+            "is_paused": self.api_state.pause_requested,
+            "mode": "PAPER" if self.paper else "LIVE",
+            "uptime": self.stats.uptime,
+            # Header / feed fields
+            "coin": self.coin,
+            "strategy": type(self.strategy).__name__,
+            "market_connected": self.market.is_connected,
+            "market_countdown": market_countdown,
+            "btc_price": round(self.btc.price, 2) if self.btc.has_data else None,
+            "btc_connected": self.btc.is_connected,
+            "btc_momentum_30s": round(btc_mom30 * 100, 3) if btc_mom30 is not None else None,
+            "btc_volatility_60s": round(btc_vol60 * 100, 3) if btc_vol60 > 0 else None,
+            # Orderbook
+            "up_bid": round(self.market.get_best_bid("up"), 4),
+            "up_ask": round(self.market.get_best_ask("up"), 4),
+            "up_spread": round(self.market.get_spread("up"), 4),
+            "down_bid": round(self.market.get_best_bid("down"), 4),
+            "down_ask": round(self.market.get_best_ask("down"), 4),
+            "down_spread": round(self.market.get_spread("down"), 4),
+        }
+        self.api_state.current_positions = [
+            {
+                "id": pos.id,
+                "side": pos.side,
+                "entry_price": round(pos.entry_price, 4),
+                "size": round(pos.size, 2),
+                "entry_time": pos.entry_time,
+                "hold_time": round(pos.get_hold_time(), 1),
+            }
+            for pos in self.positions.get_all_positions()
+        ]
+
+    def _sync_api_settings_snapshot(self) -> None:
+        """Publish current runtime settings to the API state."""
+        trend_threshold = getattr(self.strategy, "trend_threshold", None)
+        self.api_state.settings = {
+            "size_usdc": round(self.size_usdc, 4),
+            "take_profit": round(self.positions.take_profit, 4),
+            "stop_loss": round(self.positions.stop_loss, 4),
+            "max_positions": self.positions.max_positions,
+            "min_spread": round(self.min_spread, 4),
+            "cooldown": round(self.cooldown, 4),
+            "min_hold_time": round(self.min_hold_time, 4),
+            "trend_threshold": round(float(trend_threshold), 4) if trend_threshold is not None else None,
+        }
+
+    def _apply_runtime_settings_update(self) -> None:
+        """Apply pending settings sent from the dashboard."""
+        updates = dict(self.api_state.pending_settings_update)
+        if not updates:
+            return
+
+        self.api_state.pending_settings_update.clear()
+        applied: Dict[str, float | int] = {}
+        rejected: Dict[str, str] = {}
+
+        if "trend_threshold" in updates and isinstance(self.strategy, TrendFollowingStrategy):
+            val = float(updates["trend_threshold"])
+            if 0.0 <= val <= 1.0:
+                self.strategy.trend_threshold = val
+                applied["trend_threshold"] = round(val, 4)
+            else:
+                rejected["trend_threshold"] = "must be between 0 and 1"
+
+        if "min_hold_time" in updates:
+            val = float(updates["min_hold_time"])
+            if val >= 0:
+                self.min_hold_time = val
+                applied["min_hold_time"] = round(val, 4)
+            else:
+                rejected["min_hold_time"] = "must be >= 0"
+
+        if "size_usdc" in updates:
+            val = float(updates["size_usdc"])
+            if val > 0:
+                self.size_usdc = val
+                applied["size_usdc"] = round(val, 4)
+            else:
+                rejected["size_usdc"] = "must be > 0"
+
+        if "min_spread" in updates:
+            val = float(updates["min_spread"])
+            if val >= 0:
+                self.min_spread = val
+                applied["min_spread"] = round(val, 4)
+            else:
+                rejected["min_spread"] = "must be >= 0"
+
+        if "cooldown" in updates:
+            val = float(updates["cooldown"])
+            if val >= 0:
+                self.cooldown = val
+                applied["cooldown"] = round(val, 4)
+            else:
+                rejected["cooldown"] = "must be >= 0"
+
+        if "take_profit" in updates:
+            val = float(updates["take_profit"])
+            if val > 0:
+                self.positions.take_profit = val
+                applied["take_profit"] = round(val, 4)
+            else:
+                rejected["take_profit"] = "must be > 0"
+
+        if "stop_loss" in updates:
+            val = float(updates["stop_loss"])
+            if val > 0:
+                self.positions.stop_loss = val
+                applied["stop_loss"] = round(val, 4)
+            else:
+                rejected["stop_loss"] = "must be > 0"
+
+        if "max_positions" in updates:
+            val = int(updates["max_positions"])
+            if val >= 1:
+                self.positions.max_positions = val
+                applied["max_positions"] = val
+            else:
+                rejected["max_positions"] = "must be >= 1"
+
+        self._sync_api_settings_snapshot()
+        if applied:
+            self.log.add(
+                "Runtime settings applied: "
+                + ", ".join(f"{k}={v}" for k, v in applied.items()),
+                "info",
+            )
+        if rejected:
+            self.log.add(
+                "Runtime settings rejected: "
+                + ", ".join(f"{k} ({reason})" for k, reason in rejected.items()),
+                "warning",
+            )
+
+    async def _send_notification(self, event: NotificationEvent) -> None:
+        """Send a notification to Discord/Telegram."""
+        await self.notifier.send(event)
+
+    async def _handle_manual_controls(self) -> None:
+        """Execute one-shot control actions requested via API."""
+        prices = self._prices()
+
+        if self.api_state.close_all_requested:
+            self.api_state.close_all_requested = False
+            positions = list(self.positions.get_all_positions())
+            for pos in positions:
+                px = prices.get(pos.side, 0.0) or pos.entry_price
+                pnl = pos.get_pnl(px)
+                await self._exit_position(pos, "MANUAL_FLATTEN", pnl)
+            if not positions:
+                self.log.add("Flatten requested: no open positions", "info")
+
+        if self.api_state.close_winners_requested:
+            self.api_state.close_winners_requested = False
+            winners = []
+            for pos in list(self.positions.get_all_positions()):
+                px = prices.get(pos.side, 0.0) or pos.entry_price
+                pnl = pos.get_pnl(px)
+                if pnl > 0:
+                    winners.append((pos, pnl))
+            for pos, pnl in winners:
+                await self._exit_position(pos, "MANUAL_TAKE_PROFIT", pnl)
+            if not winners:
+                self.log.add("Close winners requested: none found", "info")
+
+        if self.api_state.close_losers_requested:
+            self.api_state.close_losers_requested = False
+            losers = []
+            for pos in list(self.positions.get_all_positions()):
+                px = prices.get(pos.side, 0.0) or pos.entry_price
+                pnl = pos.get_pnl(px)
+                if pnl < 0:
+                    losers.append((pos, pnl))
+            for pos, pnl in losers:
+                await self._exit_position(pos, "MANUAL_CUT_LOSS", pnl)
+            if not losers:
+                self.log.add("Cut losses requested: none found", "info")
 
     # ── Main lifecycle ────────────────────────────────────────────────────────
 
@@ -327,6 +538,18 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
             "cooldown":   self.cooldown,
             "min_hold":   self.min_hold_time,
         })
+
+        # ── Initialize API state ───────────────────────────────────────────────
+        self._sync_api_settings_snapshot()
+        self._update_api_state()
+
+        # ── Send startup notification ──────────────────────────────────────────
+        await self._send_notification(NotificationEvent(
+            type="startup",
+            title="Bot Started",
+            message=f"Polymarket {self.coin} trend bot started in {mode} mode",
+            severity="info",
+        ))
 
         # ── Register market callbacks ─────────────────────────────────────────
 
@@ -372,7 +595,22 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
         # ── Main loop ─────────────────────────────────────────────────────────
         try:
             while self._running:
+                # Handle stop/pause commands from the API
+                if self.api_state.stop_requested:
+                    self.api_state.stop_requested = False
+                    self._running = False
+                    break
+
+                self._apply_runtime_settings_update()
+
+                await self._handle_manual_controls()
+
+                if self.api_state.pause_requested:
+                    self._update_api_state()
+                    await asyncio.sleep(0.5)
+                    continue
                 await self._tick()
+                self._update_api_state()
                 await asyncio.sleep(0.5)
         except asyncio.CancelledError:
             pass
@@ -385,6 +623,17 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
                 pass
             await self.market.stop()
             self.log.add("AutoBot stopped.", "info")
+
+            # ── Send shutdown notification ───────────────────────────────────
+            await self._send_notification(NotificationEvent(
+                type="shutdown",
+                title="Bot Stopped",
+                message=f"Final PnL: {self.stats.total_pnl:+.4f} USDC",
+                severity="info",
+                pnl=self.stats.total_pnl,
+                extra={"win_rate": f"{self.stats.win_rate:.1f}%"},
+            ))
+
             _log({
                 "event":         "STOP",
                 "trades_placed": self.stats.trades_placed,
@@ -467,7 +716,11 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
         if entry_price <= 0:
             return
 
-        size     = self.size_usdc / entry_price
+        stake_usdc = min(self.size_usdc, self._bankroll)
+        if stake_usdc <= 0:
+            return
+
+        size     = stake_usdc / entry_price
         order_id: Optional[str] = None
         token_id = (
             self.market.current_market.token_ids.get(signal.side, "")
@@ -547,16 +800,44 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
             entry_str = "?"
         self.log.add(
             f"{mode_prefix}BUY {signal.side.upper()} @ {entry_price:.4f}  "
-            f"${self.size_usdc:.2f}  R²={signal.confidence:.2f}  "
+            f"${stake_usdc:.2f}  R²={signal.confidence:.2f}  "
             f"(Entry: {entry_str})",
             "trade",
         )
+
+        # ── Send notification ──────────────────────────────────────────────────
+        await self._send_notification(NotificationEvent(
+            type="trade_entry",
+            title=f"📈 Entered {signal.side.upper()}",
+            message=signal.reason,
+            severity="info",
+            side=signal.side,
+            extra={
+                "entry_price": f"{entry_price:.4f}",
+                "size_usdc": f"{stake_usdc:.2f}",
+                "confidence": f"{signal.confidence:.2f}",
+            },
+        ))
+
+        # ── Broadcast to WebSocket clients ─────────────────────────────────────
+        trade_event = {
+            "event": "ENTER",
+            "side": signal.side,
+            "entry_price": round(entry_price, 4),
+            "size_usdc": round(stake_usdc, 2),
+            "confidence": round(signal.confidence, 4),
+            "timestamp": datetime.now().isoformat(),
+        }
+        await self.api_state.broadcast_trade(trade_event)
+
+        # ── Update API state ───────────────────────────────────────────────────
+        self._update_api_state()
         _log({
             "event":        "ENTER",
             "mode":         "PAPER" if self.paper else "LIVE",
             "side":         signal.side,
             "entry_price":  round(entry_price, 4),
-            "size_usdc":    self.size_usdc,
+            "size_usdc":    round(stake_usdc, 4),
             "r2":           pos.r2,
             "slope":        pos.slope,
             "spread":       pos.spread_at_entry,
@@ -616,6 +897,7 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
             current_price = sell_price
 
         self.positions.close_position(pos.id, pnl)
+        self._bankroll = max(self._bankroll + pnl, 0.01)
         self.stats.trades_closed += 1
         self.stats.total_pnl += pnl
         self.stats.record_trade(pnl >= 0, pnl)
@@ -631,6 +913,40 @@ class AutoBot: # Main bot class that encapsulates all logic and state for the tr
             f"CLOSE {pos.side.upper()} @ {current_price:.4f}  PnL {pnl:+.4f}  ({exit_type})",
             level,
         )
+
+        # ── Send notification ──────────────────────────────────────────────────
+        title = f"{'✅ WIN' if pnl >= 0 else '❌ LOSS'}: {pnl:+.2f} USDC"
+        await self._send_notification(NotificationEvent(
+            type="trade_exit",
+            title=title,
+            message=f"Exited {pos.side.upper()} position via {exit_type}",
+            severity="success" if pnl >= 0 else "error",
+            pnl=pnl,
+            side=pos.side,
+            extra={
+                "entry": f"{pos.entry_price:.4f}",
+                "exit": f"{current_price:.4f}",
+                "hold_time": f"{pos.get_hold_time():.1f}s",
+                "win_rate": f"{self.stats.win_rate:.1f}%",
+            },
+        ))
+
+        # ── Broadcast to WebSocket clients ─────────────────────────────────────
+        trade_event = {
+            "event": "EXIT",
+            "side": pos.side,
+            "entry_price": round(pos.entry_price, 4),
+            "exit_price": round(current_price, 4),
+            "pnl": round(pnl, 4),
+            "outcome": "WIN" if pnl >= 0 else "LOSS",
+            "exit_type": exit_type,
+            "hold_time": round(pos.get_hold_time(), 1),
+            "timestamp": datetime.now().isoformat(),
+        }
+        await self.api_state.broadcast_trade(trade_event)
+
+        # ── Update API state ───────────────────────────────────────────────────
+        self._update_api_state()
 
         # Market time remaining at the moment of exit
         mkt = self.market.current_market
@@ -756,18 +1072,28 @@ async def main_async(args: argparse.Namespace) -> None:
             display.render()
             await asyncio.sleep(args.refresh)
 
+    # ── Start API server ───────────────────────────────────────────────────────
+    api_server = get_api_server()
+    api_task = asyncio.create_task(api_server.run(host="0.0.0.0", port=8000))
+    print(f"\n{Colors.BOLD}{Colors.GREEN}✓ API Server running on http://0.0.0.0:8000{Colors.RESET}")
+
     bot_task = asyncio.create_task(auto.run())
     ui_task  = asyncio.create_task(ui_loop())
 
     try:
-        await asyncio.gather(bot_task, ui_task)
+        await asyncio.gather(bot_task, ui_task, api_task)
     except asyncio.CancelledError:
         pass
     finally:
         auto._running = False
         ui_task.cancel()
+        api_task.cancel()
         try:
             await ui_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await api_task
         except asyncio.CancelledError:
             pass
         display.render()

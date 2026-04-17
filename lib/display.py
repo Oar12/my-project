@@ -162,7 +162,7 @@ class Display:
         )
         lines.append(
             f"  cooldown={b.cooldown:.0f}s  min_hold={b.min_hold_time:.0f}s  "
-            f"size=${b.size_usdc:.2f}  max_pos={b.positions.max_positions}  "
+            f"size=${b._bankroll:.2f}  max_pos={b.positions.max_positions}  "
             f"TP={b.positions.take_profit * 100:.0f}%  SL={b.positions.stop_loss * 100:.0f}%"
         )
         lines.append("")

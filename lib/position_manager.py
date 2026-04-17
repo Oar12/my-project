@@ -71,7 +71,7 @@ class Position:
 
     def check_take_profit(self, current_price: float) -> bool:
         """Check if take profit is triggered."""
-        return current_price >= self.take_profit_price
+        return current_price >= self.take_profit_price or current_price >= 0.99
 
     def check_stop_loss(self, current_price: float) -> bool:
         """Check if stop loss is triggered."""

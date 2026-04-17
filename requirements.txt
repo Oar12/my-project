@@ -42,6 +42,11 @@ pytest-cov>=4.0.0              # Code coverage
 # For better async performance
 aiohttp>=3.8.0                  # Alternative async HTTP client
 
+# FastAPI and WebSocket server for dashboard API
+fastapi>=0.104.0               # Fast async web framework
+uvicorn>=0.24.0                # ASGI server for FastAPI
+python-multipart>=0.0.6        # For form data parsing
+
 # Data handling
 pandas>=2.0.0                   # For market data analysis
 numpy>=1.24.0                   # Numerical operations
